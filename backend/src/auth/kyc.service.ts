@@ -50,7 +50,7 @@ export class KycService {
 
     const requestedTier = dto.tier;
 
-    // Enforce tier progression: cannot skip tiers (Requirement 4.2)
+    // Enforce tier progression: cannot skip tiers
     if (requestedTier > user.kyc_tier + 1) {
       throw new ForbiddenException(
         `You must complete Tier ${user.kyc_tier + 1} before requesting Tier ${requestedTier}`,

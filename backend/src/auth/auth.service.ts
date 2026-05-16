@@ -45,7 +45,7 @@ export class AuthService {
       await this.userRepo.save(user);
     }
 
-    // Sign JWT with 15-minute expiry (Requirement 3.3)
+    // Sign JWT with 15-minute expiry
     const payload = {
       sub: user.id,
       wallet_address: user.wallet_address,
