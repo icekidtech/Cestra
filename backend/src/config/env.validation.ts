@@ -13,6 +13,7 @@ export const envValidationSchema = Joi.object({
 
   // Application
   APP_PORT: Joi.number().integer().positive().default(3000),
+  APP_BASE_URL: Joi.string().uri().required(),
   NODE_ENV: Joi.string()
     .valid('development', 'test', 'production')
     .default('development'),

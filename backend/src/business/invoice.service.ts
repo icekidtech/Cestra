@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Invoice } from './entities/invoice.entity';
 import { CreateInvoiceDto } from './dto/invoice.dto';
 
@@ -9,6 +10,7 @@ export class InvoiceService {
   constructor(
     @InjectRepository(Invoice)
     private readonly invoiceRepo: Repository<Invoice>,
+    private readonly config: ConfigService,
   ) {}
 
   async createInvoice(businessId: string, dto: CreateInvoiceDto) {
@@ -29,8 +31,9 @@ export class InvoiceService {
     });
     await this.invoiceRepo.save(invoice);
 
-    // Generate hosted payment URL
-    const paymentUrl = `https://pay.cestra.io/invoice/${invoice.id}`;
+    // Generate hosted payment URL from APP_BASE_URL env var
+    const baseUrl = this.config.get<string>('APP_BASE_URL');
+    const paymentUrl = `${baseUrl}/v1/invoices/${invoice.id}/pay`;
 
     return {
       invoice_id: invoice.id,
