@@ -91,7 +91,7 @@ export class BatchPayoutService {
       headers.forEach((h, idx) => {
         row[h] = values[idx] ?? '';
       });
-      rows.push(row as CsvRow);
+      rows.push(row as unknown as CsvRow);
     }
 
     return rows;
