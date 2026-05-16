@@ -22,7 +22,11 @@ import { ConfigService } from '@nestjs/config';
           database: config.get<string>('DB_NAME'),
           username: config.get<string>('DB_USER'),
           password: config.get<string>('DB_PASSWORD'),
+          // Entity classes will be imported here as they are created
           entities: [],
+          // autoLoadEntities picks up entities registered via TypeOrmModule.forFeature() in feature modules
+          autoLoadEntities: true,
+          // Never auto-sync schema — all schema changes go through explicit migrations
           synchronize: false,
         };
       },

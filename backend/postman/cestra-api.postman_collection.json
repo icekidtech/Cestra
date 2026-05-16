@@ -1,0 +1,562 @@
+{
+  "info": {
+    "_postman_id": "cestra-api-collection",
+    "name": "Cestra API",
+    "description": "Complete API collection for the Cestra stablecoin payment platform backend.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "{{base_url}}" },
+    { "key": "jwt_token", "value": "{{jwt_token}}" },
+    { "key": "api_key", "value": "{{api_key}}" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('access_token present', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.have.property('access_token');",
+                  "  pm.expect(b).to.have.property('wallet_address');",
+                  "  pm.expect(b).to.have.property('user_id');",
+                  "  pm.environment.set('jwt_token', b.access_token);",
+                  "  pm.environment.set('test_user_id', b.user_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"zklogin_token\": \"eyJ3YWxsZXRfYWRkcmVzcyI6IjB4YWJjMTIzIiwicHJvdmlkZXIiOiJnb29nbGUifQ==\",\n  \"provider\": \"google\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST Login — invalid token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 401', () => pm.response.to.have.status(401));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"zklogin_token\": \"invalid\",\n  \"provider\": \"google\"\n}" }
+          }
+        },
+        {
+          "name": "POST KYC Initiate",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('session_url present', () => pm.expect(pm.response.json()).to.have.property('session_url'));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/auth/kyc",
+            "body": { "mode": "raw", "raw": "{\n  \"tier\": 1\n}" }
+          }
+        },
+        {
+          "name": "POST KYC Webhook (Persona callback)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/auth/kyc/webhook",
+            "body": { "mode": "raw", "raw": "{\n  \"data\": {\n    \"attributes\": {\n      \"status\": \"approved\",\n      \"reference_id\": \"{{test_user_id}}\"\n    }\n  }\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        {
+          "name": "GET Balance",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('balance fields present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('balance_usdsui'); pm.expect(b).to.have.property('yield_balance'); pm.expect(b).to.have.property('apy'); });"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/wallet/balance"
+          }
+        },
+        {
+          "name": "POST Fund ACH",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('status is PENDING', () => pm.expect(pm.response.json().status).to.equal('PENDING'));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/wallet/fund/ach",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 100,\n  \"plaid_token\": \"access-sandbox-abc123\"\n}" }
+          }
+        },
+        {
+          "name": "POST Fund ACH — amount < $1 (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/wallet/fund/ach",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 0.50,\n  \"plaid_token\": \"access-sandbox-abc123\"\n}" }
+          }
+        },
+        {
+          "name": "POST Fund Cross-Chain",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('address present', () => pm.expect(pm.response.json()).to.have.property('address'));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/wallet/fund/crosschain",
+            "body": { "mode": "raw", "raw": "{\n  \"source_chain\": \"ethereum\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Send",
+      "item": [
+        {
+          "name": "POST Send",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('tx_id and fee present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('id'); pm.expect(b.status).to.equal('PENDING'); const req = JSON.parse(pm.request.body.raw); pm.expect(parseFloat(b.fee)).to.be.closeTo(req.amount * 0.008, 0.000001); pm.environment.set('test_tx_id', b.id); });"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }, { "key": "Idempotency-Key", "value": "test-send-001" }],
+            "url": "{{base_url}}/send",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 50,\n  \"recipient_id\": \"{{test_recipient_id}}\",\n  \"corridor\": \"USD-NGN\"\n}" }
+          }
+        },
+        {
+          "name": "POST Send — insufficient balance (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 422', () => pm.response.to.have.status(422));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/send",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 9999999,\n  \"recipient_id\": \"{{test_recipient_id}}\",\n  \"corridor\": \"USD-NGN\"\n}" }
+          }
+        },
+        {
+          "name": "GET Send Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('tx_id and status present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('tx_id'); pm.expect(b).to.have.property('status'); });"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/send/{{test_tx_id}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {
+          "name": "GET Transaction History",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('pagination metadata present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('items'); pm.expect(b).to.have.property('total'); pm.expect(b).to.have.property('page'); pm.expect(b).to.have.property('limit'); pm.expect(b).to.have.property('total_pages'); pm.expect(b.total_pages).to.equal(Math.ceil(b.total / b.limit)); });"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": { "raw": "{{base_url}}/transactions?page=1&limit=20", "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "20" }] }
+          }
+        },
+        {
+          "name": "GET Transaction History — filter by type=sent",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('all items are type sent', () => { pm.response.json().items.forEach(t => pm.expect(t.type).to.equal('sent')); });"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": { "raw": "{{base_url}}/transactions?type=sent", "query": [{ "key": "type", "value": "sent" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Recipients",
+      "item": [
+        {
+          "name": "POST Create Recipient",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('recipient fields present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('id'); pm.expect(b).to.have.property('name'); pm.environment.set('test_recipient_id', b.id); });"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/recipients",
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Amara Okafor\",\n  \"country\": \"NG\",\n  \"mobile_money_type\": \"MTN_MOMO\",\n  \"account_number\": \"08012345678\"\n}" }
+          }
+        },
+        {
+          "name": "POST Create Duplicate Recipient (expect 409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 409', () => pm.response.to.have.status(409));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/recipients",
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Amara Okafor\",\n  \"country\": \"NG\",\n  \"mobile_money_type\": \"MTN_MOMO\",\n  \"account_number\": \"08012345678\"\n}" }
+          }
+        },
+        {
+          "name": "GET List Recipients",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/recipients"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Yield",
+      "item": [
+        {
+          "name": "POST Enable Yield",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('yield_enabled is true', () => pm.expect(pm.response.json().yield_enabled).to.be.true);"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/yield/enable",
+            "body": { "mode": "raw", "raw": "{\n  \"acknowledged\": true\n}" }
+          }
+        },
+        {
+          "name": "POST Enable Yield — no ack (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/yield/enable",
+            "body": { "mode": "raw", "raw": "{\n  \"acknowledged\": false\n}" }
+          }
+        },
+        {
+          "name": "POST Withdraw Yield",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('amount_withdrawn present', () => pm.expect(pm.response.json()).to.have.property('amount_withdrawn'));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/yield/withdraw",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 1.00\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pool",
+      "item": [
+        {
+          "name": "POST Create Pool",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('pool_id present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('pool_id'); pm.environment.set('test_pool_id', b.pool_id); });"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/pool/create",
+            "body": { "mode": "raw", "raw": "{\n  \"target_amount\": 500,\n  \"recipient_id\": \"{{test_recipient_id}}\",\n  \"deadline\": \"2027-12-31T23:59:59Z\"\n}" }
+          }
+        },
+        {
+          "name": "POST Create Pool — Tier 1 user (expect 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 403', () => pm.response.to.have.status(403));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/pool/create",
+            "body": { "mode": "raw", "raw": "{\n  \"target_amount\": 500,\n  \"recipient_id\": \"{{test_recipient_id}}\",\n  \"deadline\": \"2027-12-31T23:59:59Z\"\n}" }
+          }
+        },
+        {
+          "name": "POST Contribute to Pool",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('contributed amount present', () => pm.expect(pm.response.json()).to.have.property('contributed'));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{jwt_token}}" }],
+            "url": "{{base_url}}/pool/{{test_pool_id}}/contribute",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 50\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business — Batch Payout",
+      "item": [
+        {
+          "name": "POST Batch Payout — valid CSV",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('batch_id and status present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('batch_id'); pm.expect(b.status).to.equal('PROCESSING'); });"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/batch-payout",
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "/path/to/valid-batch.csv", "description": "CSV with columns: Recipient Name, Country, Mobile Money Type, Account Number, Amount (USD)" }] }
+          }
+        },
+        {
+          "name": "POST Batch Payout — invalid rows (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 422', () => pm.response.to.have.status(422));", "pm.test('per-row errors present', () => pm.expect(pm.response.json().message.errors).to.be.an('array'));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/batch-payout",
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "/path/to/invalid-batch.csv" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business — Invoice",
+      "item": [
+        {
+          "name": "POST Create Invoice",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('invoice_id and payment_url present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('invoice_id'); pm.expect(b).to.have.property('payment_url'); });"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/invoice",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 1000,\n  \"reference\": \"INV-2026-001\",\n  \"due_date\": \"2027-06-30\"\n}" }
+          }
+        },
+        {
+          "name": "POST Create Invoice — past due date (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/invoice",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 1000,\n  \"reference\": \"INV-2020-001\",\n  \"due_date\": \"2020-01-01\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business — Rate Lock",
+      "item": [
+        {
+          "name": "POST Rate Lock",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));", "pm.test('locked_rate and expires_at present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('locked_rate'); pm.expect(b).to.have.property('expires_at'); pm.expect(b.lock_fee).to.be.closeTo(b.amount * 0.0015, 0.000001); });"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/ratelock",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 5000,\n  \"corridor\": \"USD-NGN\",\n  \"duration_hours\": 12\n}" }
+          }
+        },
+        {
+          "name": "POST Rate Lock — duration > 24h (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/ratelock",
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 5000,\n  \"corridor\": \"USD-NGN\",\n  \"duration_hours\": 48\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business — Analytics",
+      "item": [
+        {
+          "name": "GET Analytics",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('analytics fields present', () => { const b = pm.response.json(); pm.expect(b).to.have.property('total_amount'); pm.expect(b).to.have.property('total_fees'); pm.expect(b).to.have.property('fee_savings'); pm.expect(b).to.have.property('corridors'); });"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/business/analytics?from_date=2026-01-01&to_date=2026-12-31", "query": [{ "key": "from_date", "value": "2026-01-01" }, { "key": "to_date", "value": "2026-12-31" }] }
+          }
+        },
+        {
+          "name": "GET Analytics — from > to (expect 400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 400', () => pm.response.to.have.status(400));"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": { "raw": "{{base_url}}/business/analytics?from_date=2026-12-31&to_date=2026-01-01", "query": [{ "key": "from_date", "value": "2026-12-31" }, { "key": "to_date", "value": "2026-01-01" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Business — Webhooks",
+      "item": [
+        {
+          "name": "POST Register Webhook",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 201', () => pm.response.to.have.status(201));"] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/webhooks",
+            "body": { "mode": "raw", "raw": "{\n  \"webhook_url\": \"https://your-server.com/webhooks/cestra\"\n}" }
+          }
+        },
+        {
+          "name": "GET List Webhooks",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));", "pm.test('returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": "{{base_url}}/business/webhooks"
+          }
+        }
+      ]
+    }
+  ]
+}
