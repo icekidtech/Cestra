@@ -33,3 +33,8 @@ desktop.ini
 !.vscode/extensions.json
 .kiro
 Cestra.md
+Cestra.docx
+cestra_content.txt
+blockchain/Move.lock
+blockchain/Published.toml
+blockchain/sui.tgz

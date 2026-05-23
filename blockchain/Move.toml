@@ -7,4 +7,8 @@ edition = "2024.beta"
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
 
 [addresses]
-cestra = "0x0"
+cestra = "0x939527bcfd46cff66286a20ad3f5a1d6b3458bd6fb8a7b516930d09683a7497b"
+
+[dev-dependencies]
+
+[dev-addresses]
