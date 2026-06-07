@@ -18,6 +18,7 @@ import { RecipientsModule } from './recipients/recipients.module';
 import { YieldModule } from './yield/yield.module';
 import { PoolModule } from './pool/pool.module';
 import { BusinessModule } from './business/business.module';
+import { BlockchainModule } from './blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -51,6 +52,9 @@ import { BusinessModule } from './business/business.module';
         storage: new ThrottlerStorageRedisService(redis),
       }),
     }),
+
+    // Blockchain & Sui Integration (includes SuiModule)
+    BlockchainModule,
 
     // Feature modules
     AuthModule,
