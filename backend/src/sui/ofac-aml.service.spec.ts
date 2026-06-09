@@ -5,25 +5,31 @@ import { OFACService, OFACCheckResult } from './ofac-aml.service';
 describe('OFACService', () => {
   let service: OFACService;
   let configService: ConfigService;
+  let mockConfigGet: jest.Mock;
 
   beforeEach(async () => {
+    // Create a persistent mock for ConfigService
+    mockConfigGet = jest.fn((key: string, defaultValue?: any) => {
+      const config = {
+        OFAC_API_URL: undefined,
+        OFAC_API_KEY: undefined,
+        OFAC_PROVIDER: 'chainalysis',
+        OFAC_MAX_RETRIES: 3,
+        OFAC_TIMEOUT_MS: 30000,
+      };
+      return config[key] !== undefined ? config[key] : defaultValue;
+    });
+
+    const mockConfigService = {
+      get: mockConfigGet,
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OFACService,
         {
           provide: ConfigService,
-          useValue: {
-            get: jest.fn((key: string, defaultValue?: any) => {
-              const config = {
-                OFAC_API_URL: undefined,
-                OFAC_API_KEY: undefined,
-                OFAC_PROVIDER: 'chainalysis',
-                OFAC_MAX_RETRIES: 3,
-                OFAC_TIMEOUT_MS: 30000,
-              };
-              return config[key] !== undefined ? config[key] : defaultValue;
-            }),
-          },
+          useValue: mockConfigService,
         },
       ],
     }).compile();
@@ -61,8 +67,9 @@ describe('OFACService', () => {
   });
 
   describe('with provider configured', () => {
-    beforeEach(() => {
-      jest.spyOn(configService, 'get').mockImplementation((key: string, defaultValue?: any) => {
+    beforeEach(async () => {
+      // Update the mock to return configured provider values
+      mockConfigGet.mockImplementation((key: string, defaultValue?: any) => {
         const config = {
           OFAC_API_URL: 'https://api.chainalysis.com/v1',
           OFAC_API_KEY: 'test-api-key',
@@ -73,20 +80,8 @@ describe('OFACService', () => {
         return config[key] !== undefined ? config[key] : defaultValue;
       });
 
-      // Recreate service with configured provider
-      const module = Test.createTestingModule({
-        providers: [
-          OFACService,
-          {
-            provide: ConfigService,
-            useValue: configService,
-          },
-        ],
-      }).compile();
-
-      module.then((m) => {
-        service = m.get<OFACService>(OFACService);
-      });
+      // Recreate service with new configuration
+      service = new OFACService(configService);
     });
 
     it('should successfully check addresses on first attempt', async () => {
@@ -274,7 +269,8 @@ describe('OFACService', () => {
 
   describe('error handling', () => {
     beforeEach(() => {
-      jest.spyOn(configService, 'get').mockImplementation((key: string, defaultValue?: any) => {
+      // Update the mock to return configured provider values
+      mockConfigGet.mockImplementation((key: string, defaultValue?: any) => {
         const config = {
           OFAC_API_URL: 'https://api.chainalysis.com/v1',
           OFAC_API_KEY: 'test-api-key',
@@ -284,6 +280,9 @@ describe('OFACService', () => {
         };
         return config[key] !== undefined ? config[key] : defaultValue;
       });
+
+      // Recreate service with new configuration
+      service = new OFACService(configService);
     });
 
     it('should handle HTTP error responses', async () => {
@@ -361,6 +360,8 @@ describe('OFACService', () => {
       ];
 
       for (const testCase of testCases) {
+        jest.clearAllMocks();
+
         const mockResponse: OFACCheckResult[] = [
           {
             address: '0x' + '1'.repeat(64),
@@ -374,7 +375,8 @@ describe('OFACService', () => {
           json: jest.fn().mockResolvedValueOnce({ scores: mockResponse }),
         });
 
-        jest.spyOn(configService, 'get').mockImplementation((key: string, defaultValue?: any) => {
+        // Create a new service instance for this test case with configured provider
+        mockConfigGet.mockImplementation((key: string, defaultValue?: any) => {
           const config = {
             OFAC_API_URL: 'https://api.chainalysis.com/v1',
             OFAC_API_KEY: 'test-api-key',
