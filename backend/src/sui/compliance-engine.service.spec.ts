@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { ConfigService } from '@nestjs/config';
 import { ComplianceEngine, ComplianceResult } from './compliance-engine.service';
+import { OFACService } from './ofac-aml.service';
 import { User } from '../auth/entities/user.entity';
 import { Blacklist } from '../blockchain/entities/blacklist.entity';
 
@@ -9,11 +11,28 @@ describe('ComplianceEngine', () => {
   let service: ComplianceEngine;
   let userRepository: Repository<User>;
   let blacklistRepository: Repository<Blacklist>;
+  let ofacService: OFACService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ComplianceEngine,
+        OFACService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string, defaultValue?: any) => {
+              const config = {
+                OFAC_API_URL: undefined,
+                OFAC_API_KEY: undefined,
+                OFAC_PROVIDER: 'chainalysis',
+                OFAC_MAX_RETRIES: 3,
+                OFAC_TIMEOUT_MS: 30000,
+              };
+              return config[key] !== undefined ? config[key] : defaultValue;
+            }),
+          },
+        },
         {
           provide: getRepositoryToken(User),
           useValue: {
@@ -32,6 +51,7 @@ describe('ComplianceEngine', () => {
     }).compile();
 
     service = module.get<ComplianceEngine>(ComplianceEngine);
+    ofacService = module.get<OFACService>(OFACService);
     userRepository = module.get<Repository<User>>(getRepositoryToken(User));
     blacklistRepository = module.get<Repository<Blacklist>>(
       getRepositoryToken(Blacklist),
