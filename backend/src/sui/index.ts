@@ -45,3 +45,8 @@ export {
   OFACCheckResult,
   ProviderResponse,
 } from './ofac-aml.service';
+export { SendService } from './send.service';
+export { PoolService } from './pool.service';
+export { YieldService } from './yield.service';
+export { CircleService } from './circle.service';
+export { BridgeService } from './bridge.service';

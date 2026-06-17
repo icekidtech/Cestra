@@ -15,6 +15,11 @@ import { EventRoutingService } from './event-routing.service';
 import { EventDeduplicationService } from './event-deduplication.service';
 import { ComplianceEngine } from './compliance-engine.service';
 import { OFACService } from './ofac-aml.service';
+import { SendService } from './send.service';
+import { PoolService } from './pool.service';
+import { YieldService } from './yield.service';
+import { CircleService } from './circle.service';
+import { BridgeService } from './bridge.service';
 import { PendingTransaction } from '../blockchain/entities/pending-transaction.entity';
 import { Transaction } from '../blockchain/entities/transaction.entity';
 import { BatchPayout } from '../blockchain/entities/batch-payout.entity';
@@ -88,6 +93,11 @@ export const SUI_KEYPAIR = 'SUI_KEYPAIR';
     EventDeduplicationService,
     OFACService,
     ComplianceEngine,
+    SendService,
+    PoolService,
+    YieldService,
+    CircleService,
+    BridgeService,
   ],
   exports: [
     SUI_CLIENT,
@@ -104,6 +114,11 @@ export const SUI_KEYPAIR = 'SUI_KEYPAIR';
     EventDeduplicationService,
     OFACService,
     ComplianceEngine,
+    SendService,
+    PoolService,
+    YieldService,
+    CircleService,
+    BridgeService,
   ],
 })
 

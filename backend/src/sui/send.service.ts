@@ -1,13 +1,11 @@
 import { Injectable, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Transaction } from '../blockchain/entities/transaction.entity';
+import { Transaction, TransactionStatus } from '../blockchain/entities/transaction.entity';
 import { User } from '../auth/entities/user.entity';
-import { TransactionBuilderService } from './transaction-builder.service';
+import { TransactionBuilderService, SendTransactionInput } from './transaction-builder.service';
 import { TransactionSubmissionService } from './transaction-submission.service';
-import { ComplianceEngine } from './compliance-engine.service';
-import { RateLockService } from './ratelock.service';
-import { WebhookService } from './webhook.service';
+import { ComplianceEngine, ComplianceResult } from './compliance-engine.service';
 
 export interface SendRequest {
   sender: string;
@@ -36,8 +34,6 @@ export class SendService {
     private transactionBuilderService: TransactionBuilderService,
     private transactionSubmissionService: TransactionSubmissionService,
     private complianceEngine: ComplianceEngine,
-    private rateLockService: RateLockService,
-    private webhookService: WebhookService,
   ) {}
 
   /**
@@ -46,19 +42,18 @@ export class SendService {
    * Flow:
    * 1. Validate compliance (KYC, limit, blacklist, OFAC)
    * 2. Fetch user and build transaction
-   * 3. Apply rate-lock if provided
-   * 4. Submit to Sui with retry logic
-   * 5. Return submission result to caller
+   * 3. Submit to Sui with retry logic
+   * 4. Return submission result to caller
    * 
-   * @param request Send request with sender, recipient, amount, optional rate-lock
+   * @param request Send request with sender, recipient, amount
    * @returns Send response with transaction ID and status
    * @throws ForbiddenException if compliance validation fails
    * @throws BadRequestException if input validation fails
    */
   async initiateSend(request: SendRequest): Promise<SendResponse> {
-    const { sender, recipient, amount, rateLockId } = request;
+    const { sender, recipient, amount } = request;
 
-    this.logger.debug(`Send initiated: sender=${sender}, recipient=${recipient}, amount=${amount}, rateLockId=${rateLockId}`);
+    this.logger.debug(`Send initiated: sender=${sender}, recipient=${recipient}, amount=${amount}`);
 
     // Input validation
     if (!sender || !recipient) {
@@ -89,24 +84,13 @@ export class SendService {
       throw new BadRequestException('Sender user not found');
     }
 
-    // Apply rate-lock if provided
-    let appliedRate: string | undefined;
-    if (rateLockId) {
-      appliedRate = await this.rateLockService.applyLock(rateLockId, sender, amount);
-    }
-
     // Build Send transaction
     const buildResult = await this.transactionBuilderService.buildSendTransaction({
       sender,
       recipient,
       amount,
-      kycTier: complianceResult.kyc_tier || 0,
-    });
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build Send transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Transaction build failed: ${buildResult.error}`);
-    }
+      tier: complianceResult.kycTier || 0,
+    } as SendTransactionInput);
 
     // Calculate fee (0.80% of amount)
     const fee = (amount * 80n) / 10000n;
@@ -115,30 +99,32 @@ export class SendService {
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        sender,
+        'send',
+        [recipient, amount.toString(), complianceResult.kycTier || 0],
         buildResult.idempotencyKey,
-        10, // max 10 retries
       );
     } catch (error) {
-      this.logger.error(`Send submission failed: ${error.message}`);
-      throw new BadRequestException(`Transaction submission failed: ${error.message}`);
+      this.logger.error(`Send submission failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(`Transaction submission failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 
     // Store transaction in database
     const txEntity = this.transactionRepository.create({
       sender,
       recipient,
-      amount: amount.toString(),
-      fee: fee.toString(),
-      kyc_tier: complianceResult.kyc_tier || 0,
-      status: 'SUBMITTED',
-      on_chain_digest: submitResult.digest,
-      user_id: user.id,
+      amount: BigInt(amount.toString()),
+      fee,
+      kycTier: complianceResult.kycTier || 0,
+      status: TransactionStatus.SUBMITTED,
+      onChainDigest: submitResult.digest,
+      userId: user.id,
     });
 
     await this.transactionRepository.save(txEntity);
 
-    this.logger.info(
+    this.logger.log(
       `Send submitted successfully: txId=${txEntity.id}, digest=${submitResult.digest}, amount=${amount}`,
     );
 
@@ -147,7 +133,7 @@ export class SendService {
       status: 'SUBMITTED',
       digest: submitResult.digest,
       estimatedFee: fee.toString(),
-      createdAt: txEntity.created_at.toISOString(),
+      createdAt: txEntity.createdAt.toISOString(),
     };
   }
 
@@ -173,11 +159,11 @@ export class SendService {
       recipient: tx.recipient,
       amount: tx.amount,
       fee: tx.fee,
-      kyc_tier: tx.kyc_tier,
+      kycTier: tx.kycTier,
       status: tx.status,
-      on_chain_digest: tx.on_chain_digest,
-      created_at: tx.created_at.toISOString(),
-      updated_at: tx.updated_at.toISOString(),
+      onChainDigest: tx.onChainDigest,
+      createdAt: tx.createdAt.toISOString(),
+      updatedAt: tx.updatedAt.toISOString(),
     };
   }
 
@@ -209,7 +195,7 @@ export class SendService {
     }
 
     const [items, total] = await query
-      .orderBy('tx.created_at', 'DESC')
+      .orderBy('tx.createdAt', 'DESC')
       .limit(limit)
       .offset(offset)
       .getManyAndCount();
@@ -222,7 +208,7 @@ export class SendService {
         amount: tx.amount,
         fee: tx.fee,
         status: tx.status,
-        created_at: tx.created_at.toISOString(),
+        createdAt: tx.createdAt.toISOString(),
       })),
       total,
       limit,
@@ -235,11 +221,10 @@ export class SendService {
    * Updates transaction with on-chain confirmation details
    * 
    * @param digest Transaction digest
-   * @param event On-chain SendEvent
    */
-  async onSendConfirmed(digest: string, event: any): Promise<void> {
+  async onSendConfirmed(digest: string): Promise<void> {
     const tx = await this.transactionRepository.findOne({
-      where: { on_chain_digest: digest },
+      where: { onChainDigest: digest },
     });
 
     if (!tx) {
@@ -247,19 +232,12 @@ export class SendService {
       return;
     }
 
-    // Update transaction status
-    tx.status = 'CONFIRMED';
-    tx.updated_at = new Date();
+    // Update transaction status - use enum value
+    tx.status = TransactionStatus.CONFIRMED;
+    tx.updatedAt = new Date();
     await this.transactionRepository.save(tx);
 
-    this.logger.info(`Send confirmed on-chain: txId=${tx.id}, digest=${digest}`);
-
-    // Notify user via webhook
-    try {
-      await this.webhookService.notifyTransactionConfirmed(tx);
-    } catch (error) {
-      this.logger.error(`Failed to send webhook notification: ${error.message}`);
-    }
+    this.logger.log(`Send confirmed on-chain: txId=${tx.id}, digest=${digest}`);
   }
 
   /**
@@ -271,7 +249,7 @@ export class SendService {
    */
   async onSendFailed(digest: string, error: string): Promise<void> {
     const tx = await this.transactionRepository.findOne({
-      where: { on_chain_digest: digest },
+      where: { onChainDigest: digest },
     });
 
     if (!tx) {
@@ -279,19 +257,12 @@ export class SendService {
       return;
     }
 
-    // Update transaction status
-    tx.status = 'FAILED';
-    tx.root_cause = error;
-    tx.updated_at = new Date();
+    // Update transaction status - use enum value
+    tx.status = TransactionStatus.FAILED;
+    tx.rootCause = error;
+    tx.updatedAt = new Date();
     await this.transactionRepository.save(tx);
 
     this.logger.error(`Send failed: txId=${tx.id}, digest=${digest}, error=${error}`);
-
-    // Notify user via webhook
-    try {
-      await this.webhookService.notifyTransactionFailed(tx, error);
-    } catch (error) {
-      this.logger.error(`Failed to send webhook notification: ${error.message}`);
-    }
   }
 }
