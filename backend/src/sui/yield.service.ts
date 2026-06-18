@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
-import { YieldDeposit } from '../blockchain/entities/yield-deposit.entity';
+import { YieldDeposit, YieldDepositStatus } from '../blockchain/entities/yield-deposit.entity';
 import { User } from '../auth/entities/user.entity';
 import { TransactionBuilderService, YieldTransactionInput } from './transaction-builder.service';
 import { TransactionSubmissionService } from './transaction-submission.service';
@@ -82,30 +82,36 @@ export class YieldService {
     }
 
     // Fetch user
-    const userEntity = await this.userRepository.findOne({ where: { walletAddress: userAddress } });
+    const userEntity = await this.userRepository.findOne({ where: { wallet_address: userAddress } });
     if (!userEntity) {
       throw new BadRequestException('User not found');
     }
 
     // Build deposit transaction
-    const buildResult = await this.transactionBuilderService.buildYieldTransaction({
-      operation: 'deposit',
-      user: userAddress,
-      vaultId,
-      amount,
-      tier: result.kycTier || 0,
-    } as YieldTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build yield deposit transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Deposit failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildYieldTransaction({
+        operation: 'deposit',
+        user: userAddress,
+        vaultId,
+        amount,
+        tier: result.kycTier || 0,
+      } as any);
+    } catch (error) {
+      this.logger.error(`Failed to build yield deposit transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Deposit failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'deposit',
+        [userAddress, vaultId, amount],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -119,11 +125,11 @@ export class YieldService {
     const deposit = this.yieldDepositRepository.create({
       userId: userEntity.id,
       vaultId,
-      amount: amount.toString(),
-      shares: amount.toString(),
-      accruedValue: amount.toString(),
-      status: 'ACTIVE',
-      onChainDigest: submitResult.digest,
+      amount,
+      shares: amount,
+      accruedValue: amount,
+      status: YieldDepositStatus.ACTIVE,
+      depositedAt: new Date(),
     });
 
     await this.yieldDepositRepository.save(deposit);
@@ -159,28 +165,34 @@ export class YieldService {
       throw new BadRequestException('Deposit not found');
     }
 
-    if (deposit.status !== 'ACTIVE') {
+    if (deposit.status !== YieldDepositStatus.ACTIVE) {
       throw new BadRequestException(`Deposit is not active. Current status: ${deposit.status}`);
     }
 
     // Build withdrawal transaction
-    const buildResult = await this.transactionBuilderService.buildYieldTransaction({
-      operation: 'withdraw',
-      depositId,
-      user: userAddress,
-      shares,
-    } as YieldTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build yield withdrawal transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Withdrawal failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildYieldTransaction({
+        operation: 'withdraw',
+        depositId,
+        user: userAddress,
+        shares,
+      } as any);
+    } catch (error) {
+      this.logger.error(`Failed to build yield withdrawal transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Withdrawal failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'withdraw',
+        [depositId, userAddress, shares],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -191,7 +203,8 @@ export class YieldService {
     }
 
     // Update deposit status
-    deposit.status = 'WITHDRAWN';
+    deposit.status = YieldDepositStatus.WITHDRAWN;
+    deposit.withdrawnAt = new Date();
     await this.yieldDepositRepository.save(deposit);
 
     this.logger.log(`Yield withdrawal submitted: depositId=${depositId}, digest=${submitResult.digest}`);
@@ -210,21 +223,21 @@ export class YieldService {
    * @returns List of active deposits
    */
   async getActiveDeposits(userAddress: string): Promise<YieldDepositResponse[]> {
-    const user = await this.userRepository.findOne({ where: { walletAddress: userAddress } });
+    const user = await this.userRepository.findOne({ where: { wallet_address: userAddress } });
     if (!user) {
       throw new BadRequestException('User not found');
     }
 
     const deposits = await this.yieldDepositRepository.find({
-      where: { userId: user.id, status: 'ACTIVE' },
+      where: { userId: user.id, status: YieldDepositStatus.ACTIVE },
     });
 
     return deposits.map((d) => ({
       depositId: d.id,
       vaultId: d.vaultId,
-      depositAmount: d.amount,
-      shares: d.shares,
-      accruedValue: d.accruedValue,
+      depositAmount: d.amount.toString(),
+      shares: d.shares.toString(),
+      accruedValue: d.accruedValue.toString(),
       status: d.status,
       depositedAt: d.createdAt.toISOString(),
     }));
@@ -243,7 +256,7 @@ export class YieldService {
     try {
       // Get all active deposits
       const deposits = await this.yieldDepositRepository.find({
-        where: { status: 'ACTIVE' },
+        where: { status: YieldDepositStatus.ACTIVE },
       });
 
       if (deposits.length === 0) {
@@ -252,20 +265,24 @@ export class YieldService {
       }
 
       // Build accrual transaction
-      const buildResult = await this.transactionBuilderService.buildYieldTransaction({
-        operation: 'accrue_interest',
-        vaultIds: deposits.map((d) => d.vaultId),
-      } as YieldTransactionInput);
-
-      if (!buildResult.success) {
-        this.logger.error(`Failed to build yield accrual transaction: ${buildResult.error}`);
+      let buildResult;
+      try {
+        buildResult = await this.transactionBuilderService.buildYieldTransaction({
+          operation: 'accrue_interest',
+          vaultIds: deposits.map((d) => d.vaultId),
+        } as any);
+      } catch (buildError) {
+        this.logger.error(`Failed to build yield accrual transaction: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
         return;
       }
 
       // Submit transaction
       try {
         await this.transactionSubmissionService.submitWithRetry(
-          buildResult.signedTx,
+          buildResult.transaction.toString(),
+          buildResult.sender,
+          'accrue_interest',
+          [deposits.map((d) => d.vaultId)],
           buildResult.idempotencyKey,
         );
 
@@ -297,7 +314,7 @@ export class YieldService {
     shares: bigint,
     digest: string,
   ): Promise<void> {
-    const user = await this.userRepository.findOne({ where: { walletAddress: userAddress } });
+    const user = await this.userRepository.findOne({ where: { wallet_address: userAddress } });
     if (!user) {
       this.logger.warn(`Deposit confirmed but user not found: address=${userAddress}`);
       return;
@@ -306,11 +323,11 @@ export class YieldService {
     const deposit = this.yieldDepositRepository.create({
       userId: user.id,
       vaultId,
-      amount: amount.toString(),
-      shares: shares.toString(),
-      accruedValue: amount.toString(),
-      status: 'ACTIVE',
-      onChainDigest: digest,
+      amount,
+      shares,
+      accruedValue: amount,
+      status: YieldDepositStatus.ACTIVE,
+      depositedAt: new Date(),
     });
 
     await this.yieldDepositRepository.save(deposit);
@@ -327,13 +344,13 @@ export class YieldService {
    */
   async onAccrualUpdated(vaultId: string, accruedValues: Map<string, bigint>): Promise<void> {
     const deposits = await this.yieldDepositRepository.find({
-      where: { vaultId, status: 'ACTIVE' },
+      where: { vaultId, status: YieldDepositStatus.ACTIVE },
     });
 
     for (const deposit of deposits) {
       const accrued = accruedValues.get(deposit.id);
       if (accrued !== undefined) {
-        deposit.accruedValue = accrued.toString();
+        deposit.accruedValue = accrued;
         await this.yieldDepositRepository.save(deposit);
       }
     }
@@ -355,7 +372,7 @@ export class YieldService {
       return;
     }
 
-    deposit.status = 'WITHDRAWN';
+    deposit.status = YieldDepositStatus.WITHDRAWN;
     deposit.withdrawnAt = new Date();
     await this.yieldDepositRepository.save(deposit);
 

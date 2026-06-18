@@ -41,7 +41,7 @@ export class CircuitBreakerService {
       if (timeSinceLastFailure >= this.recoveryTimeout) {
         this.state = 'HALF_OPEN';
         this.successCountInHalfOpen = 0;
-        this.logger.info('Circuit breaker transitioned to HALF_OPEN - attempting recovery');
+        this.logger.log('Circuit breaker transitioned to HALF_OPEN - attempting recovery');
       } else {
         const remainingTime = this.recoveryTimeout - timeSinceLastFailure;
         throw new ServiceUnavailableException(
@@ -61,7 +61,7 @@ export class CircuitBreakerService {
         if (this.successCountInHalfOpen >= 3) {
           this.state = 'CLOSED';
           this.failureCount = 0;
-          this.logger.info(
+          this.logger.log(
             'Circuit breaker CLOSED - recovery successful after ' +
               `${this.successCountInHalfOpen} successful calls`,
           );
@@ -130,7 +130,7 @@ export class CircuitBreakerService {
     this.successCountInHalfOpen = 0;
     this.lastFailureTime = 0;
 
-    this.logger.info(`Circuit breaker reset from ${previousState} to CLOSED`);
+    this.logger.log(`Circuit breaker reset from ${previousState} to CLOSED`);
   }
 
   /**

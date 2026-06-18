@@ -1,7 +1,7 @@
 import { Module, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SuiClient } from '@mysten/sui/client';
+import { SuiClient } from '@mysten/sui';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { BlockchainConfigService } from './blockchain-config.service';
 import { TransactionBuilderService } from './transaction-builder.service';

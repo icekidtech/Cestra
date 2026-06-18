@@ -1,7 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { SUI_CLIENT, SUI_KEYPAIR } from './sui.module';
-import { SuiClient } from '@mysten/sui/client';
+import { SuiClient } from '@mysten/sui';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction } from '@mysten/sui/transactions';
 import { BlockchainConfigService } from './blockchain-config.service';

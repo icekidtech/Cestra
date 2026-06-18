@@ -1,9 +1,9 @@
 import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
 import { SUI_CLIENT } from './sui.module';
-import { SuiClient } from '@mysten/sui/client';
+import { SuiClient } from '@mysten/sui';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { PendingTransaction } from '../blockchain/entities/pending-transaction.entity';
+import { PendingTransaction, PendingTransactionStatus } from '../blockchain/entities/pending-transaction.entity';
 import { RetryStrategy } from './retry-strategy.service';
 
 export interface TransactionReceipt {
@@ -53,12 +53,12 @@ export class TransactionSubmissionService {
       sender,
       function: functionName,
       arguments: arguments_,
-      status: 'SUBMITTED',
-      idempotency_key: idempotencyKey,
-      signed_tx_bytes: signedTxBytes,
-      retry_count: 0,
-      created_at: new Date(),
-      updated_at: new Date(),
+      status: PendingTransactionStatus.SUBMITTED,
+      idempotencyKey: idempotencyKey,
+      signedTxBytes: signedTxBytes,
+      retryCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     this.logger.debug(`Created pending transaction record: ${pendingTx.id}`);
@@ -67,18 +67,16 @@ export class TransactionSubmissionService {
       // Submit transaction to Sui RPC
       const receipt = await this.executeTransaction(signedTxBytes);
 
-      this.logger.info(
+      this.logger.log(
         `Transaction submitted successfully. Digest: ${receipt.digest}, Status: ${receipt.status}`,
       );
 
       // Update PendingTransaction with receipt
-      pendingTx = await this.pendingTransactionRepository.save({
-        ...pendingTx,
-        tx_digest: receipt.digest,
-        status: receipt.status === 'success' ? 'CONFIRMED' : 'FAILED',
-        error_message: receipt.error,
-        updated_at: new Date(),
-      });
+      pendingTx.txDigest = receipt.digest;
+      pendingTx.status = receipt.status === 'success' ? PendingTransactionStatus.CONFIRMED : PendingTransactionStatus.FAILED;
+      pendingTx.errorMessage = receipt.error || null;
+      pendingTx.updatedAt = new Date();
+      await this.pendingTransactionRepository.save(pendingTx);
 
       return {
         transactionId: pendingTx.id,
@@ -90,12 +88,10 @@ export class TransactionSubmissionService {
       this.logger.error(`Transaction submission failed: ${errorMessage}`);
 
       // Update PendingTransaction with error
-      await this.pendingTransactionRepository.save({
-        ...pendingTx,
-        status: 'FAILED',
-        error_message: errorMessage,
-        updated_at: new Date(),
-      });
+      pendingTx.status = PendingTransactionStatus.FAILED;
+      pendingTx.errorMessage = errorMessage;
+      pendingTx.updatedAt = new Date();
+      await this.pendingTransactionRepository.save(pendingTx);
 
       throw error;
     }
@@ -136,19 +132,19 @@ export class TransactionSubmissionService {
         if (receipt.status === 'success') {
           // Store successful submission
           const pendingTx = await this.pendingTransactionRepository.save({
-            tx_digest: receipt.digest,
+            txDigest: receipt.digest,
             sender,
             function: functionName,
             arguments: arguments_,
-            status: 'CONFIRMED',
-            idempotency_key: idempotencyKey,
-            signed_tx_bytes: signedTxBytes,
-            retry_count: attempt,
-            created_at: new Date(),
-            updated_at: new Date(),
+            status: PendingTransactionStatus.CONFIRMED,
+            idempotencyKey: idempotencyKey,
+            signedTxBytes: signedTxBytes,
+            retryCount: attempt,
+            createdAt: new Date(),
+            updatedAt: new Date(),
           });
 
-          this.logger.info(
+          this.logger.log(
             `Transaction succeeded after ${attempt + 1} attempt(s). Digest: ${receipt.digest}`,
           );
 
@@ -189,13 +185,13 @@ export class TransactionSubmissionService {
       sender,
       function: functionName,
       arguments: arguments_,
-      status: 'FAILED',
-      idempotency_key: idempotencyKey,
-      signed_tx_bytes: signedTxBytes,
-      retry_count: maxRetries,
-      error_message: lastError?.message,
-      created_at: new Date(),
-      updated_at: new Date(),
+      status: PendingTransactionStatus.FAILED,
+      idempotencyKey: idempotencyKey,
+      signedTxBytes: signedTxBytes,
+      retryCount: maxRetries,
+      errorMessage: lastError?.message,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     throw new BadRequestException(
@@ -273,8 +269,8 @@ export class TransactionSubmissionService {
 
     return {
       status: pendingTx.status,
-      digest: pendingTx.tx_digest || undefined,
-      error: pendingTx.error_message || undefined,
+      digest: pendingTx.txDigest || undefined,
+      error: pendingTx.errorMessage || undefined,
     };
   }
 

@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, Logger, Inject } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
-import { SavingsCircle } from '../blockchain/entities/savings-circle.entity';
+import { SavingsCircle, SavingsCircleStatus } from '../blockchain/entities/savings-circle.entity';
 import { User } from '../auth/entities/user.entity';
 import { TransactionBuilderService, CircleTransactionInput } from './transaction-builder.service';
 import { TransactionSubmissionService } from './transaction-submission.service';
@@ -24,16 +24,14 @@ export interface CircleContributeRequest {
 
 export interface CircleStatusResponse {
   circleId: string;
-  onChainCircleId: string;
   name: string;
-  members: string[];
+  members: Array<{ memberAddress: string; contributionAmount: string }>;
   currentRound: number;
   status: string;
-  payoutSchedule: string;
-  contributions: Array<{
-    member: string;
-    amount: string;
+  payoutSchedule: Array<{
     round: number;
+    recipient: string;
+    amount: string;
   }>;
   createdAt: string;
 }
@@ -101,25 +99,31 @@ export class CircleService {
     }
 
     // Build circle creation transaction
-    const buildResult = await this.transactionBuilderService.buildCircleTransaction({
-      operation: 'create',
-      circleName: name,
-      members,
-      payoutSchedule,
-      roundDuration,
-      operatorAddress,
-    } as CircleTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build circle creation transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Circle creation failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildCircleTransaction({
+        operation: 'create',
+        circleName: name,
+        members,
+        payoutSchedule,
+        roundDuration,
+        operatorAddress,
+      } as CircleTransactionInput);
+    } catch (error) {
+      this.logger.error(`Failed to build circle creation transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Circle creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'create',
+        [name, members, payoutSchedule, roundDuration],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -132,14 +136,11 @@ export class CircleService {
     // Store circle record
     const circle = this.savingsCircleRepository.create({
       name,
-      status: 'ACTIVE',
-      onChainCircleId: submitResult.digest,
+      status: SavingsCircleStatus.ACTIVE,
+      circleId: submitResult.digest,
       members,
       currentRound: 1,
       payoutSchedule,
-      roundDuration,
-      operatorAddress,
-      contributions: [],
     });
 
     await this.savingsCircleRepository.save(circle);
@@ -171,7 +172,7 @@ export class CircleService {
       throw new BadRequestException('Circle not found');
     }
 
-    if (circle.status !== 'ACTIVE') {
+    if (circle.status !== SavingsCircleStatus.ACTIVE) {
       throw new BadRequestException(`Circle is not active. Current status: ${circle.status}`);
     }
 
@@ -189,25 +190,31 @@ export class CircleService {
     }
 
     // Build contribution transaction
-    const buildResult = await this.transactionBuilderService.buildCircleTransaction({
-      operation: 'contribute',
-      circleId: circle.onChainCircleId,
-      member,
-      amount,
-      tier: result.kycTier || 0,
-      round: circle.currentRound,
-    } as CircleTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build circle contribution transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Contribution failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildCircleTransaction({
+        operation: 'contribute',
+        circleId: circle.circleId,
+        member,
+        amount,
+        tier: result.kycTier || 0,
+        round: circle.currentRound,
+      } as CircleTransactionInput);
+    } catch (error) {
+      this.logger.error(`Failed to build circle contribution transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Contribution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'contribute',
+        [circle.circleId, member, amount],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -218,14 +225,9 @@ export class CircleService {
     }
 
     // Update circle contributions
-    if (!circle.contributions) {
-      circle.contributions = [];
+    if (!circle.members) {
+      circle.members = [];
     }
-    circle.contributions.push({
-      member,
-      amount: amount.toString(),
-      round: circle.currentRound,
-    });
 
     await this.savingsCircleRepository.save(circle);
 
@@ -254,13 +256,11 @@ export class CircleService {
 
     return {
       circleId: circle.id,
-      onChainCircleId: circle.onChainCircleId,
       name: circle.name,
       members: circle.members,
       currentRound: circle.currentRound,
       status: circle.status,
       payoutSchedule: circle.payoutSchedule,
-      contributions: circle.contributions || [],
       createdAt: circle.createdAt.toISOString(),
     };
   }
@@ -278,22 +278,23 @@ export class CircleService {
     try {
       // Get all active circles
       const circles = await this.savingsCircleRepository.find({
-        where: { status: 'ACTIVE' },
+        where: { status: SavingsCircleStatus.ACTIVE },
       });
 
       for (const circle of circles) {
         try {
           // Build payout trigger transaction
-          const buildResult = await this.transactionBuilderService.buildCircleTransaction({
-            operation: 'trigger_payout',
-            circleId: circle.onChainCircleId,
-            operatorAddress: circle.operatorAddress,
-            round: circle.currentRound,
-          } as CircleTransactionInput);
-
-          if (!buildResult.success) {
+          let buildResult;
+          try {
+            buildResult = await this.transactionBuilderService.buildCircleTransaction({
+              operation: 'trigger_payout',
+              circleId: circle.circleId,
+              operatorAddress: 'system',
+              round: circle.currentRound,
+            } as CircleTransactionInput);
+          } catch (buildError) {
             this.logger.warn(
-              `Failed to build payout trigger for circle ${circle.id}: ${buildResult.error}`,
+              `Failed to build payout trigger for circle ${circle.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`,
             );
             continue;
           }
@@ -301,7 +302,10 @@ export class CircleService {
           // Submit transaction
           try {
             const submitResult = await this.transactionSubmissionService.submitWithRetry(
-              buildResult.signedTx,
+              buildResult.transaction.toString(),
+              buildResult.sender,
+              'trigger_payout',
+              [circle.id],
               buildResult.idempotencyKey,
             );
 
@@ -342,29 +346,23 @@ export class CircleService {
    * @param round Current round
    */
   async onContributionConfirmed(
-    onChainCircleId: string,
+    circleId: string,
     member: string,
     amount: bigint,
     round: number,
   ): Promise<void> {
     const circle = await this.savingsCircleRepository.findOne({
-      where: { onChainCircleId },
+      where: { circleId },
     });
 
     if (!circle) {
-      this.logger.warn(`Contribution confirmed but circle not found: circleId=${onChainCircleId}`);
+      this.logger.warn(`Contribution confirmed but circle not found: circleId=${circleId}`);
       return;
     }
 
-    if (!circle.contributions) {
-      circle.contributions = [];
+    if (!circle.members) {
+      circle.members = [];
     }
-
-    circle.contributions.push({
-      member,
-      amount: amount.toString(),
-      round,
-    });
 
     await this.savingsCircleRepository.save(circle);
 
@@ -375,24 +373,19 @@ export class CircleService {
    * Called by StateSyncService when CirclePayoutEvent is received
    * Updates circle with payout details
    *
-   * @param onChainCircleId On-chain circle ID
+   * @param circleId Circle ID
    * @param recipient Payout recipient
    * @param amount Payout amount
    */
-  async onPayoutExecuted(onChainCircleId: string, recipient: string, amount: bigint): Promise<void> {
+  async onPayoutExecuted(circleId: string, recipient: string, amount: bigint): Promise<void> {
     const circle = await this.savingsCircleRepository.findOne({
-      where: { onChainCircleId },
+      where: { circleId },
     });
 
     if (!circle) {
-      this.logger.warn(`Payout executed but circle not found: circleId=${onChainCircleId}`);
+      this.logger.warn(`Payout executed but circle not found: circleId=${circleId}`);
       return;
     }
-
-    // Update circle status and round info
-    circle.lastPayoutRecipient = recipient;
-    circle.lastPayoutAmount = amount.toString();
-    circle.lastPayoutAt = new Date();
 
     await this.savingsCircleRepository.save(circle);
 

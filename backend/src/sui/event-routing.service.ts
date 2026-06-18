@@ -116,7 +116,7 @@ export class EventRoutingService {
       if (results[i].status === 'rejected') {
         const reason = results[i];
         this.logger.error(
-          `Handler ${i} failed for ${event.eventType}: ${reason instanceof Error ? reason.reason.message : 'Unknown error'}`,
+          `Handler ${i} failed for ${event.eventType}: ${reason instanceof Error ? reason.message : 'Unknown error'}`,
         );
       }
     }

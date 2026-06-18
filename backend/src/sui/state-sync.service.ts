@@ -1,14 +1,14 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { ParsedEvent } from './on-chain-monitor.service';
 import { EventRoutingService } from './event-routing.service';
-import { Transaction } from '../blockchain/entities/transaction.entity';
-import { BatchPayout } from '../blockchain/entities/batch-payout.entity';
-import { YieldDeposit } from '../blockchain/entities/yield-deposit.entity';
-import { SavingsCircle } from '../blockchain/entities/savings-circle.entity';
-import { RateLock } from '../blockchain/entities/rate-lock.entity';
-import { CrossChainTransfer } from '../blockchain/entities/cross-chain-transfer.entity';
+import { Transaction, TransactionStatus } from '../blockchain/entities/transaction.entity';
+import { BatchPayout, BatchPayoutStatus } from '../blockchain/entities/batch-payout.entity';
+import { YieldDeposit, YieldDepositStatus } from '../blockchain/entities/yield-deposit.entity';
+import { SavingsCircle, SavingsCircleStatus } from '../blockchain/entities/savings-circle.entity';
+import { RateLock, RateLockStatus } from '../blockchain/entities/rate-lock.entity';
+import { CrossChainTransfer, CrossChainTransferStatus } from '../blockchain/entities/cross-chain-transfer.entity';
 
 /**
  * StateSyncService listens for on-chain events and updates PostgreSQL entities
@@ -38,16 +38,6 @@ export class StateSyncService {
     private dataSource: DataSource,
     @InjectRepository(Transaction)
     private transactionRepository: Repository<Transaction>,
-    @InjectRepository(BatchPayout)
-    private batchPayoutRepository: Repository<BatchPayout>,
-    @InjectRepository(YieldDeposit)
-    private yieldDepositRepository: Repository<YieldDeposit>,
-    @InjectRepository(SavingsCircle)
-    private savingsCircleRepository: Repository<SavingsCircle>,
-    @InjectRepository(RateLock)
-    private rateLockRepository: Repository<RateLock>,
-    @InjectRepository(CrossChainTransfer)
-    private crossChainTransferRepository: Repository<CrossChainTransfer>,
     private eventRoutingService: EventRoutingService,
   ) {
     this.registerHandlers();
@@ -137,7 +127,7 @@ export class StateSyncService {
 
         if (transaction) {
           // Update existing
-          transaction.status = 'CONFIRMED' as any;
+          transaction.status = TransactionStatus.CONFIRMED;
           await manager.save(transaction);
 
           this.logger.debug(
@@ -151,7 +141,7 @@ export class StateSyncService {
             amount: BigInt(amount),
             fee: BigInt(fee),
             kycTier: 1, // Will be updated by compliance engine
-            status: 'CONFIRMED' as any,
+            status: TransactionStatus.CONFIRMED,
             onChainDigest: event.digest,
           });
 
@@ -176,26 +166,26 @@ export class StateSyncService {
   async onPoolCreatedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'pool_id',
-        'target_recipients',
+        'poolId',
+        'targetRecipients',
       ]);
 
-      const { pool_id, name, target_recipients } = event.parsedJson;
+      const { poolId, name, targetRecipients } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const batchPayout = manager.create(BatchPayout, {
-          pool_id,
+          poolId,
           name: name || 'Unnamed Pool',
-          status: 'ACTIVE',
-          target_recipients: target_recipients || [],
+          status: BatchPayoutStatus.ACTIVE,
+          targetRecipients: targetRecipients || [],
           contributors: [],
-          total_amount: BigInt(0),
+          totalAmount: BigInt(0),
         });
 
         await manager.save(batchPayout);
 
         this.logger.debug(
-          `Created BatchPayout: ${batchPayout.id} (pool_id: ${pool_id})`,
+          `Created BatchPayout: ${batchPayout.id} (poolId: ${poolId})`,
         );
       });
     } catch (error) {
@@ -212,21 +202,21 @@ export class StateSyncService {
   async onPoolContributedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'pool_id',
+        'poolId',
         'contributor',
         'amount',
       ]);
 
-      const { pool_id, contributor, amount } = event.parsedJson;
+      const { poolId, contributor, amount } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const batchPayout = await manager.findOne(BatchPayout, {
-          where: { pool_id },
+          where: { poolId },
         });
 
         if (!batchPayout) {
           this.logger.warn(
-            `BatchPayout not found for pool_id: ${pool_id}`,
+            `BatchPayout not found for poolId: ${poolId}`,
           );
           return;
         }
@@ -234,20 +224,20 @@ export class StateSyncService {
         // Update contributors array
         const contributors = batchPayout.contributors || [];
         const existingContributor = contributors.find(
-          (c: any) => c.address === contributor,
+          (c: any) => c.contributor === contributor,
         );
 
         if (existingContributor) {
           existingContributor.amount = (BigInt(existingContributor.amount) + BigInt(amount)).toString();
         } else {
           contributors.push({
-            address: contributor,
+            contributor,
             amount: amount.toString(),
           });
         }
 
         batchPayout.contributors = contributors;
-        batchPayout.total_amount = contributors.reduce(
+        batchPayout.totalAmount = contributors.reduce(
           (sum: bigint, c: any) => sum + BigInt(c.amount),
           BigInt(0),
         );
@@ -271,24 +261,24 @@ export class StateSyncService {
    */
   async onPoolExecutedEvent(event: ParsedEvent): Promise<void> {
     try {
-      this.validateRequiredFields(event, ['pool_id']);
+      this.validateRequiredFields(event, ['poolId']);
 
-      const { pool_id } = event.parsedJson;
+      const { poolId } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const batchPayout = await manager.findOne(BatchPayout, {
-          where: { pool_id },
+          where: { poolId },
         });
 
         if (!batchPayout) {
           this.logger.warn(
-            `BatchPayout not found for pool_id: ${pool_id}`,
+            `BatchPayout not found for poolId: ${poolId}`,
           );
           return;
         }
 
-        batchPayout.status = 'EXECUTED';
-        batchPayout.executed_at = new Date(event.timestamp);
+        batchPayout.status = BatchPayoutStatus.EXECUTED;
+        batchPayout.executedAt = new Date(event.timestamp);
 
         await manager.save(batchPayout);
 
@@ -310,29 +300,29 @@ export class StateSyncService {
   async onYieldDepositedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'user_address',
-        'vault_id',
+        'userAddress',
+        'vaultId',
         'amount',
         'shares',
       ]);
 
-      const { user_address, vault_id, amount, shares } = event.parsedJson;
+      const { userAddress, vaultId, amount, shares } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const yieldDeposit = manager.create(YieldDeposit, {
-          user_address,
-          vault_id,
+          userId: userAddress,
+          vaultId,
           amount: BigInt(amount),
           shares: BigInt(shares),
-          accrued_value: BigInt(amount),
-          status: 'ACTIVE',
-          deposited_at: new Date(event.timestamp),
+          accruedValue: BigInt(amount),
+          status: YieldDepositStatus.ACTIVE,
+          depositedAt: new Date(event.timestamp),
         });
 
         await manager.save(yieldDeposit);
 
         this.logger.debug(
-          `Created YieldDeposit: ${yieldDeposit.id} (vault_id: ${vault_id})`,
+          `Created YieldDeposit: ${yieldDeposit.id} (vaultId: ${vaultId})`,
         );
       });
     } catch (error) {
@@ -349,24 +339,24 @@ export class StateSyncService {
   async onYieldAccruedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'vault_id',
-        'accrued_value',
+        'vaultId',
+        'accruedValue',
       ]);
 
-      const { vault_id, accrued_value } = event.parsedJson;
+      const { vaultId, accruedValue } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const deposits = await manager.find(YieldDeposit, {
-          where: { vault_id, status: 'ACTIVE' },
+          where: { vaultId, status: YieldDepositStatus.ACTIVE },
         });
 
         for (const deposit of deposits) {
-          deposit.accrued_value = BigInt(accrued_value);
+          deposit.accruedValue = BigInt(accruedValue);
           await manager.save(deposit);
         }
 
         this.logger.debug(
-          `Updated ${deposits.length} YieldDeposits for vault: ${vault_id}`,
+          `Updated ${deposits.length} YieldDeposits for vault: ${vaultId}`,
         );
       });
     } catch (error) {
@@ -383,26 +373,26 @@ export class StateSyncService {
   async onCircleCreatedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'circle_id',
+        'circleId',
         'members',
       ]);
 
-      const { circle_id, name, members } = event.parsedJson;
+      const { circleId, name, members } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const circle = manager.create(SavingsCircle, {
-          circle_id,
+          circleId,
           name: name || 'Unnamed Circle',
           members: members || [],
-          current_round: 1,
-          payout_schedule: [],
-          status: 'ACTIVE',
+          currentRound: 1,
+          payoutSchedule: [],
+          status: SavingsCircleStatus.ACTIVE,
         });
 
         await manager.save(circle);
 
         this.logger.debug(
-          `Created SavingsCircle: ${circle.id} (circle_id: ${circle_id})`,
+          `Created SavingsCircle: ${circle.id} (circleId: ${circleId})`,
         );
       });
     } catch (error) {
@@ -419,36 +409,36 @@ export class StateSyncService {
   async onCirclePayoutTriggeredEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'circle_id',
+        'circleId',
         'recipient',
         'amount',
       ]);
 
-      const { circle_id, recipient, amount, round } = event.parsedJson;
+      const { circleId, recipient, amount, round } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const circle = await manager.findOne(SavingsCircle, {
-          where: { circle_id },
+          where: { circleId },
         });
 
         if (!circle) {
           this.logger.warn(
-            `SavingsCircle not found for circle_id: ${circle_id}`,
+            `SavingsCircle not found for circleId: ${circleId}`,
           );
           return;
         }
 
         // Update payout schedule
-        const schedule = circle.payout_schedule || [];
+        const schedule = circle.payoutSchedule || [];
         schedule.push({
-          round: round || circle.current_round,
+          round: round || circle.currentRound,
           recipient,
           amount: amount.toString(),
-          paid_at: event.timestamp,
+          paidAt: event.timestamp,
         });
 
-        circle.payout_schedule = schedule;
-        circle.current_round = (circle.current_round || 1) + 1;
+        circle.payoutSchedule = schedule;
+        circle.currentRound = (circle.currentRound || 1) + 1;
 
         await manager.save(circle);
 
@@ -470,29 +460,29 @@ export class StateSyncService {
   async onRateLockCreatedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'lock_id',
-        'locked_amount',
-        'fx_rate',
-        'expiry_at',
+        'lockId',
+        'lockedAmount',
+        'fxRate',
+        'expiryAt',
       ]);
 
-      const { lock_id, business_id, locked_amount, fx_rate, expiry_at } =
+      const { lockId, businessId, lockedAmount, fxRate, expiryAt } =
         event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const rateLock = manager.create(RateLock, {
-          lock_id,
-          business_id,
-          locked_amount: BigInt(locked_amount),
-          fx_rate: parseFloat(fx_rate),
-          expiry_at: new Date(parseInt(expiry_at) * 1000),
-          status: 'ACTIVE',
+          lockId,
+          businessId,
+          lockedAmount: BigInt(lockedAmount),
+          fxRate: parseFloat(fxRate),
+          expiryAt: new Date(parseInt(expiryAt) * 1000),
+          status: RateLockStatus.ACTIVE,
         });
 
         await manager.save(rateLock);
 
         this.logger.debug(
-          `Created RateLock: ${rateLock.id} (lock_id: ${lock_id})`,
+          `Created RateLock: ${rateLock.id} (lockId: ${lockId})`,
         );
       });
     } catch (error) {
@@ -508,23 +498,23 @@ export class StateSyncService {
    */
   async onRateLockFilledEvent(event: ParsedEvent): Promise<void> {
     try {
-      this.validateRequiredFields(event, ['lock_id']);
+      this.validateRequiredFields(event, ['lockId']);
 
-      const { lock_id } = event.parsedJson;
+      const { lockId } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const rateLock = await manager.findOne(RateLock, {
-          where: { lock_id },
+          where: { lockId },
         });
 
         if (!rateLock) {
           this.logger.warn(
-            `RateLock not found for lock_id: ${lock_id}`,
+            `RateLock not found for lockId: ${lockId}`,
           );
           return;
         }
 
-        rateLock.status = 'USED';
+        rateLock.status = RateLockStatus.USED;
 
         await manager.save(rateLock);
 
@@ -545,23 +535,23 @@ export class StateSyncService {
    */
   async onRateLockExpiredEvent(event: ParsedEvent): Promise<void> {
     try {
-      this.validateRequiredFields(event, ['lock_id']);
+      this.validateRequiredFields(event, ['lockId']);
 
-      const { lock_id } = event.parsedJson;
+      const { lockId } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const rateLock = await manager.findOne(RateLock, {
-          where: { lock_id },
+          where: { lockId },
         });
 
         if (!rateLock) {
           this.logger.warn(
-            `RateLock not found for lock_id: ${lock_id}`,
+            `RateLock not found for lockId: ${lockId}`,
           );
           return;
         }
 
-        rateLock.status = 'EXPIRED';
+        rateLock.status = RateLockStatus.EXPIRED;
 
         await manager.save(rateLock);
 
@@ -583,28 +573,28 @@ export class StateSyncService {
   async onBridgeCctpCompletedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'message_id',
+        'messageId',
         'receiver',
         'amount',
       ]);
 
-      const { message_id, receiver, amount } = event.parsedJson;
+      const { messageId, receiver, amount } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const transfer = await manager.findOne(CrossChainTransfer, {
-          where: { message_id },
+          where: { messageId },
         });
 
         if (!transfer) {
           this.logger.warn(
-            `CrossChainTransfer not found for message_id: ${message_id}`,
+            `CrossChainTransfer not found for messageId: ${messageId}`,
           );
           return;
         }
 
-        transfer.status = 'RECEIVED';
-        transfer.received_amount = BigInt(amount);
-        transfer.received_at = new Date(event.timestamp);
+        transfer.status = CrossChainTransferStatus.RECEIVED;
+        transfer.receivedAmount = BigInt(amount);
+        transfer.receivedAt = new Date(event.timestamp);
 
         await manager.save(transfer);
 
@@ -626,28 +616,28 @@ export class StateSyncService {
   async onBridgeWormholeCompletedEvent(event: ParsedEvent): Promise<void> {
     try {
       this.validateRequiredFields(event, [
-        'message_id',
+        'messageId',
         'receiver',
         'amount',
       ]);
 
-      const { message_id, receiver, amount } = event.parsedJson;
+      const { messageId, receiver, amount } = event.parsedJson;
 
       await this.dataSource.transaction(async (manager) => {
         const transfer = await manager.findOne(CrossChainTransfer, {
-          where: { message_id },
+          where: { messageId },
         });
 
         if (!transfer) {
           this.logger.warn(
-            `CrossChainTransfer not found for message_id: ${message_id}`,
+            `CrossChainTransfer not found for messageId: ${messageId}`,
           );
           return;
         }
 
-        transfer.status = 'RECEIVED';
-        transfer.received_amount = BigInt(amount);
-        transfer.received_at = new Date(event.timestamp);
+        transfer.status = CrossChainTransferStatus.RECEIVED;
+        transfer.receivedAmount = BigInt(amount);
+        transfer.receivedAt = new Date(event.timestamp);
 
         await manager.save(transfer);
 
@@ -685,7 +675,7 @@ export class StateSyncService {
   async manualSyncTransaction(digest: string): Promise<StateSyncResult> {
     try {
       const transaction = await this.transactionRepository.findOne({
-        where: { on_chain_digest: digest },
+        where: { onChainDigest: digest },
       });
 
       if (!transaction) {

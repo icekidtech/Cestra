@@ -123,22 +123,26 @@ export class BridgeService {
           }
 
           // Build complete_cctp_receive transaction
-          const buildResult = await this.transactionBuilderService.buildBridgeTransaction({
-            operation: 'complete_cctp',
-            messageId: transfer.messageId,
-            receiver: transfer.receiver,
-            amount: BigInt(transfer.amount),
-          } as BridgeTransactionInput);
-
-          if (!buildResult.success) {
-            this.logger.warn(`Failed to build CCTP completion for transfer ${transfer.id}: ${buildResult.error}`);
+          let buildResult;
+          try {
+            buildResult = await this.transactionBuilderService.buildBridgeTransaction({
+              operation: 'complete_cctp',
+              messageId: transfer.messageId,
+              receiver: transfer.receiver,
+              amount: BigInt(transfer.amount),
+            } as BridgeTransactionInput);
+          } catch (buildError) {
+            this.logger.warn(`Failed to build CCTP completion for transfer ${transfer.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
             continue;
           }
 
           // Submit transaction
           try {
             const submitResult = await this.transactionSubmissionService.submitWithRetry(
-              buildResult.signedTx,
+              buildResult.transaction.toString(),
+              buildResult.sender,
+              'complete_cctp',
+              [transfer.messageId, transfer.receiver, transfer.amount],
               buildResult.idempotencyKey,
             );
 
@@ -194,22 +198,26 @@ export class BridgeService {
           }
 
           // Build complete_wormhole_receive transaction
-          const buildResult = await this.transactionBuilderService.buildBridgeTransaction({
-            operation: 'complete_wormhole',
-            messageId: transfer.messageId,
-            receiver: transfer.receiver,
-            amount: BigInt(transfer.amount),
-          } as BridgeTransactionInput);
-
-          if (!buildResult.success) {
-            this.logger.warn(`Failed to build Wormhole completion for transfer ${transfer.id}: ${buildResult.error}`);
+          let buildResult;
+          try {
+            buildResult = await this.transactionBuilderService.buildBridgeTransaction({
+              operation: 'complete_wormhole',
+              messageId: transfer.messageId,
+              receiver: transfer.receiver,
+              amount: BigInt(transfer.amount),
+            } as BridgeTransactionInput);
+          } catch (buildError) {
+            this.logger.warn(`Failed to build Wormhole completion for transfer ${transfer.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
             continue;
           }
 
           // Submit transaction
           try {
             const submitResult = await this.transactionSubmissionService.submitWithRetry(
-              buildResult.signedTx,
+              buildResult.transaction.toString(),
+              buildResult.sender,
+              'complete_wormhole',
+              [transfer.messageId, transfer.receiver, transfer.amount],
               buildResult.idempotencyKey,
             );
 
@@ -262,16 +270,17 @@ export class BridgeService {
           const operation = transfer.bridgeProtocol === 'CCTP' ? 'complete_cctp' : 'complete_wormhole';
 
           // Build retry transaction
-          const buildResult = await this.transactionBuilderService.buildBridgeTransaction({
-            operation,
-            messageId: transfer.messageId,
-            receiver: transfer.receiver,
-            amount: BigInt(transfer.amount),
-          } as BridgeTransactionInput);
-
-          if (!buildResult.success) {
+          let buildResult;
+          try {
+            buildResult = await this.transactionBuilderService.buildBridgeTransaction({
+              operation,
+              messageId: transfer.messageId,
+              receiver: transfer.receiver,
+              amount: BigInt(transfer.amount),
+            } as BridgeTransactionInput);
+          } catch (buildError) {
             this.logger.warn(
-              `Failed to build retry transaction for transfer ${transfer.id}: ${buildResult.error}`,
+              `Failed to build retry transaction for transfer ${transfer.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`,
             );
             continue;
           }
@@ -279,7 +288,10 @@ export class BridgeService {
           // Submit transaction
           try {
             const submitResult = await this.transactionSubmissionService.submitWithRetry(
-              buildResult.signedTx,
+              buildResult.transaction.toString(),
+              buildResult.sender,
+              operation,
+              [transfer.messageId, transfer.receiver, transfer.amount],
               buildResult.idempotencyKey,
             );
 

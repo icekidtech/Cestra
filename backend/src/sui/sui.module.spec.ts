@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { SuiModule, SUI_CLIENT, SUI_KEYPAIR } from './sui.module';
-import { SuiClient } from '@mysten/sui/client';
+import { SuiClient } from '@mysten/sui';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
 describe('SuiModule', () => {

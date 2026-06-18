@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { BatchPayout } from '../blockchain/entities/batch-payout.entity';
+import { BatchPayout, BatchPayoutStatus } from '../blockchain/entities/batch-payout.entity';
 import { User } from '../auth/entities/user.entity';
 import { TransactionBuilderService, PoolTransactionInput } from './transaction-builder.service';
 import { TransactionSubmissionService } from './transaction-submission.service';
@@ -31,7 +31,6 @@ export interface PoolRefundRequest {
 
 export interface PoolStatusResponse {
   poolId: string;
-  onChainPoolId: string;
   name: string;
   status: string;
   totalAmount: string;
@@ -111,23 +110,29 @@ export class PoolService {
     }
 
     // Build pool creation transaction
-    const buildResult = await this.transactionBuilderService.buildPoolTransaction({
-      operation: 'create',
-      poolName: name,
-      recipients: recipients.map((r) => ({ address: r.address, amount: r.amount })),
-      operatorAddress,
-    } as PoolTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build pool creation transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Pool creation failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildPoolTransaction({
+        operation: 'create',
+        poolName: name,
+        recipients: recipients.map((r) => ({ address: r.address, amount: r.amount })),
+        operatorAddress,
+      } as PoolTransactionInput);
+    } catch (error) {
+      this.logger.error(`Failed to build pool creation transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Pool creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'create',
+        [name, recipients.map(r => r.address), recipients.map(r => r.amount)],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -141,12 +146,11 @@ export class PoolService {
     const totalAmount = recipients.reduce((sum, r) => sum + r.amount, 0n);
     const pool = this.batchPayoutRepository.create({
       name,
-      status: 'ACTIVE',
-      onChainPoolId: submitResult.digest,
-      targetRecipients: recipients.map((r) => ({ address: r.address, amount: r.amount.toString() })),
+      status: BatchPayoutStatus.ACTIVE,
+      poolId: submitResult.digest,
+      targetRecipients: recipients.map((r) => ({ recipient: r.address, amount: r.amount.toString() })),
       contributors: [],
-      totalAmount: totalAmount.toString(),
-      operatorAddress,
+      totalAmount,
     });
 
     await this.batchPayoutRepository.save(pool);
@@ -178,7 +182,7 @@ export class PoolService {
       throw new BadRequestException('Pool not found');
     }
 
-    if (pool.status !== 'ACTIVE') {
+    if (pool.status !== BatchPayoutStatus.ACTIVE) {
       throw new BadRequestException(`Pool is not active. Current status: ${pool.status}`);
     }
 
@@ -196,24 +200,30 @@ export class PoolService {
     }
 
     // Build contribution transaction
-    const buildResult = await this.transactionBuilderService.buildPoolTransaction({
-      operation: 'contribute',
-      poolId: pool.onChainPoolId,
-      contributor,
-      amount,
-      tier: result.kycTier || 0,
-    } as PoolTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build pool contribution transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Contribution failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildPoolTransaction({
+        operation: 'contribute',
+        poolId: pool.poolId,
+        contributor,
+        amount,
+        tier: result.kycTier || 0,
+      } as PoolTransactionInput);
+    } catch (error) {
+      this.logger.error(`Failed to build pool contribution transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Contribution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'contribute',
+        [pool.poolId, contributor, amount],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -228,9 +238,8 @@ export class PoolService {
       pool.contributors = [];
     }
     pool.contributors.push({
-      address: contributor,
+      contributor,
       amount: amount.toString(),
-      timestamp: new Date().toISOString(),
     });
 
     await this.batchPayoutRepository.save(pool);
@@ -262,27 +271,33 @@ export class PoolService {
       throw new BadRequestException('Pool not found');
     }
 
-    if (pool.status !== 'ACTIVE') {
+    if (pool.status !== BatchPayoutStatus.ACTIVE) {
       throw new BadRequestException(`Pool is not active. Current status: ${pool.status}`);
     }
 
     // Build execution transaction
-    const buildResult = await this.transactionBuilderService.buildPoolTransaction({
-      operation: 'execute',
-      poolId: pool.onChainPoolId,
-      operatorAddress,
-    } as PoolTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build pool execution transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Execution failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildPoolTransaction({
+        operation: 'execute',
+        poolId: pool.poolId,
+        operatorAddress,
+      } as PoolTransactionInput);
+    } catch (error) {
+      this.logger.error(`Failed to build pool execution transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'execute',
+        [pool.poolId],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -293,7 +308,7 @@ export class PoolService {
     }
 
     // Update pool status
-    pool.status = 'EXECUTING';
+    pool.status = BatchPayoutStatus.EXECUTING;
     pool.executedAt = new Date();
     await this.batchPayoutRepository.save(pool);
 
@@ -325,22 +340,28 @@ export class PoolService {
     }
 
     // Build refund transaction
-    const buildResult = await this.transactionBuilderService.buildPoolTransaction({
-      operation: 'refund',
-      poolId: pool.onChainPoolId,
-      operatorAddress,
-    } as PoolTransactionInput);
-
-    if (!buildResult.success) {
-      this.logger.error(`Failed to build pool refund transaction: ${buildResult.error}`);
-      throw new BadRequestException(`Refund failed: ${buildResult.error}`);
+    let buildResult;
+    try {
+      buildResult = await this.transactionBuilderService.buildPoolTransaction({
+        operation: 'refund',
+        poolId: pool.poolId,
+        operatorAddress,
+      } as PoolTransactionInput);
+    } catch (error) {
+      this.logger.error(`Failed to build pool refund transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new BadRequestException(
+        `Refund failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
 
     // Submit transaction
     let submitResult;
     try {
       submitResult = await this.transactionSubmissionService.submitWithRetry(
-        buildResult.signedTx,
+        buildResult.transaction.toString(),
+        buildResult.sender,
+        'refund',
+        [pool.poolId],
         buildResult.idempotencyKey,
       );
     } catch (error) {
@@ -351,7 +372,7 @@ export class PoolService {
     }
 
     // Update pool status
-    pool.status = 'REFUNDED';
+    pool.status = BatchPayoutStatus.REFUNDED;
     await this.batchPayoutRepository.save(pool);
 
     this.logger.log(`Pool refund submitted: poolId=${poolId}, digest=${submitResult.digest}`);
@@ -379,10 +400,9 @@ export class PoolService {
 
     return {
       poolId: pool.id,
-      onChainPoolId: pool.onChainPoolId,
       name: pool.name,
       status: pool.status,
-      totalAmount: pool.totalAmount,
+      totalAmount: pool.totalAmount.toString(),
       contributors: pool.contributors || [],
       recipients: pool.targetRecipients || [],
       createdAt: pool.createdAt.toISOString(),
@@ -394,22 +414,22 @@ export class PoolService {
    * Called by StateSyncService when PoolExecuted event is received
    * Updates pool status to EXECUTED
    *
-   * @param onChainPoolId On-chain pool ID
+   * @param poolId Pool ID
    */
-  async onPoolExecuted(onChainPoolId: string): Promise<void> {
+  async onPoolExecuted(poolId: string): Promise<void> {
     const pool = await this.batchPayoutRepository.findOne({
-      where: { onChainPoolId },
+      where: { poolId },
     });
 
     if (!pool) {
-      this.logger.warn(`PoolExecuted event received but pool not found: poolId=${onChainPoolId}`);
+      this.logger.warn(`PoolExecuted event received but pool not found: poolId=${poolId}`);
       return;
     }
 
-    pool.status = 'EXECUTED';
+    pool.status = BatchPayoutStatus.EXECUTED;
     pool.executedAt = new Date();
     await this.batchPayoutRepository.save(pool);
 
-    this.logger.log(`Pool executed on-chain: poolId=${pool.id}, onChainPoolId=${onChainPoolId}`);
+    this.logger.log(`Pool executed on-chain: poolId=${pool.id}, poolId=${poolId}`);
   }
 }

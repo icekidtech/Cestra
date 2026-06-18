@@ -6,7 +6,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { SuiClient } from '@mysten/sui/client';
+import { SuiClient } from '@mysten/sui';
 import { SUI_CLIENT } from './sui.module';
 import { EventEmitter } from 'events';
 import * as redis from 'ioredis';
