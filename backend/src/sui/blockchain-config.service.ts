@@ -14,6 +14,25 @@ export interface BlockchainConfig {
   packageId: string;
   modules: Record<string, ModuleConfig>;
   defaultGasBudget: number;
+  /** Shared object IDs created at deploy time (see deploykeys.md). */
+  objects: SharedObjects;
+  /** Fully-qualified coin type used for settlement (e.g. USDC on testnet). */
+  coinType: string;
+}
+
+export interface SharedObjects {
+  complianceRegistry?: string;
+  adminCapCompliance?: string;
+  sendConfig?: string;
+  sendEscrow?: string;
+  txRegistry?: string;
+  rateOracle?: string;
+  rateLockConfig?: string;
+  rateLockRegistry?: string;
+  bridgeConfig?: string;
+  processedMessages?: string;
+  /** Sui system Clock object — always 0x6. */
+  clock: string;
 }
 
 @Injectable()
@@ -38,17 +57,43 @@ export class BlockchainConfigService {
 
     const defaultGasBudget = 10_000_000; // 10 million MIST (~0.01 SUI)
 
+    const objects: SharedObjects = {
+      complianceRegistry: this.configService.get<string>('SUI_COMPLIANCE_REGISTRY'),
+      adminCapCompliance: this.configService.get<string>('SUI_ADMIN_CAP_COMPLIANCE'),
+      sendConfig: this.configService.get<string>('SUI_SEND_CONFIG'),
+      sendEscrow: this.configService.get<string>('SUI_SEND_ESCROW'),
+      txRegistry: this.configService.get<string>('SUI_TX_REGISTRY'),
+      rateOracle: this.configService.get<string>('SUI_RATE_ORACLE'),
+      rateLockConfig: this.configService.get<string>('SUI_RATE_LOCK_CONFIG'),
+      rateLockRegistry: this.configService.get<string>('SUI_RATE_LOCK_REGISTRY'),
+      bridgeConfig: this.configService.get<string>('SUI_BRIDGE_CONFIG'),
+      processedMessages: this.configService.get<string>('SUI_PROCESSED_MESSAGES'),
+      // Sui system Clock is a well-known shared object at 0x6.
+      clock: this.configService.get<string>('SUI_CLOCK_OBJECT_ID', '0x6'),
+    };
+
+    // Settlement coin type. Defaults to Sui testnet USDC; override via env.
+    const coinType = this.configService.get<string>(
+      'SUI_COIN_TYPE',
+      '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC',
+    );
+
     const config: BlockchainConfig = {
       network,
       rpcUrl,
       packageId,
       defaultGasBudget,
+      objects,
+      coinType,
       modules: {
         send: {
           name: 'send',
           packageId,
           functions: {
-            sendPayment: 'send_payment',
+            sendPayment: 'send',
+            sendWithLock: 'send_with_lock',
+            confirmDelivery: 'confirm_delivery',
+            issueRefund: 'issue_refund',
           },
           gasbudget: defaultGasBudget,
         },
@@ -179,5 +224,33 @@ export class BlockchainConfigService {
    */
   getDefaultGasBudget(): number {
     return this.config.defaultGasBudget;
+  }
+
+  /**
+   * Get the deployed shared object IDs.
+   */
+  getObjects(): SharedObjects {
+    return this.config.objects;
+  }
+
+  /**
+   * Get a single shared object ID by key, throwing if it is not configured.
+   */
+  getObjectId(key: keyof SharedObjects): string {
+    const value = this.config.objects[key];
+    if (!value) {
+      throw new Error(
+        `Required shared object '${String(key)}' is not configured. ` +
+          `Set the corresponding SUI_* environment variable (see deploykeys.md).`,
+      );
+    }
+    return value;
+  }
+
+  /**
+   * Get the settlement coin type (fully-qualified Move type).
+   */
+  getCoinType(): string {
+    return this.config.coinType;
   }
 }

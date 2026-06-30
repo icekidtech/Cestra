@@ -128,7 +128,7 @@ describe('TransactionSubmissionService', () => {
         expect.objectContaining({
           sender: '0x' + 'sender'.padEnd(64, '0'),
           function: 'send::send_payment',
-          idempotency_key: 'idempotency-key-3',
+          idempotencyKey: 'idempotency-key-3',
         }),
       );
     });
@@ -233,7 +233,7 @@ describe('TransactionSubmissionService', () => {
       mockRepository.findOne.mockResolvedValue({
         id: 'tx-123',
         status: 'CONFIRMED',
-        tx_digest: '0x' + 'abc'.padEnd(64, '0'),
+        txDigest: '0x' + 'abc'.padEnd(64, '0'),
       });
 
       const result = await service.getTransactionStatus('tx-123');
@@ -246,7 +246,7 @@ describe('TransactionSubmissionService', () => {
       mockRepository.findOne.mockResolvedValue({
         id: 'tx-124',
         status: 'FAILED',
-        error_message: 'Insufficient balance',
+        errorMessage: 'Insufficient balance',
       });
 
       const result = await service.getTransactionStatus('tx-124');
@@ -287,7 +287,7 @@ describe('TransactionSubmissionService', () => {
       // Verify idempotency key is stored
       expect(mockRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          idempotency_key: idempotencyKey,
+          idempotencyKey: idempotencyKey,
         }),
       );
     });

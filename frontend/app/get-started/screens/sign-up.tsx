@@ -1,31 +1,71 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useAuth } from "../../lib/auth";
+import { startGoogleLogin, isGoogleConfigured } from "../../lib/zklogin";
 
-interface SignUpScreenProps {
-  onNext: () => void;
-}
-
-export default function SignUpScreen({ onNext }: SignUpScreenProps) {
+export default function SignUpScreen() {
   const { login } = useAuth();
+  const router = useRouter();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState<"google" | "apple" | null>(null);
 
-  const handleOAuth = async (provider: "google" | "apple") => {
+  const handleGoogle = async () => {
+    setError("");
+    // Real zkLogin: redirect to Google for a signed id_token. The /auth/callback
+    // page completes the login against the backend and routes to /home.
+    if (isGoogleConfigured()) {
+      setLoading("google");
+      try {
+        startGoogleLogin();
+      } catch (e) {
+        setLoading(null);
+        setError(e instanceof Error ? e.message : "Could not start Google sign-in");
+      }
+      return;
+    }
+
+    // Dev fallback — no Google client configured. Creates a real session
+    // (JWT + wallet) against the backend, then goes straight to the dashboard.
+    setLoading("google");
     try {
-      // In production: trigger zkLogin OAuth flow with Sui SDK
-      // For now: create a dummy zkLogin token for development
-      const dummyPayload = {
+      const payload = {
         wallet_address: "0x" + "a1b2c3d4e5f6".repeat(5).slice(0, 40),
-        provider,
+        provider: "google",
       };
-      const zkloginToken = btoa(JSON.stringify(dummyPayload));
+      await login(btoa(JSON.stringify(payload)), "google");
+      router.replace("/home");
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? `Sign-in failed: ${e.message}`
+          : "Sign-in failed. Is the backend running?",
+      );
+    } finally {
+      setLoading(null);
+    }
+  };
 
-      await login(zkloginToken, provider);
-      onNext();
-    } catch (error) {
-      // If backend is not running, still allow navigation for UI development
-      console.warn("Auth API unavailable, proceeding in demo mode:", error);
-      onNext();
+  const handleApple = async () => {
+    setError("");
+    setLoading("apple");
+    try {
+      const payload = {
+        wallet_address: "0x" + "f6e5d4c3b2a1".repeat(5).slice(0, 40),
+        provider: "apple",
+      };
+      await login(btoa(JSON.stringify(payload)), "apple");
+      router.replace("/home");
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? `Sign-in failed: ${e.message}`
+          : "Sign-in failed. Is the backend running?",
+      );
+    } finally {
+      setLoading(null);
     }
   };
 
@@ -79,37 +119,55 @@ export default function SignUpScreen({ onNext }: SignUpScreenProps) {
           <div className="flex w-full flex-col gap-4">
             <div className="flex w-full flex-col gap-3">
               <button
-                onClick={() => handleOAuth("google")}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-3xl bg-[#007a6e] p-2.5"
+                onClick={handleGoogle}
+                disabled={loading !== null}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-3xl bg-[#007a6e] p-2.5 disabled:opacity-60"
               >
-                <Image
-                  src="/icon-google.svg"
-                  alt=""
-                  width={24}
-                  height={24}
-                  className="size-6"
-                />
-                <span className="text-base font-semibold text-white">
-                  Sign up with Google
-                </span>
+                {loading === "google" ? (
+                  <span className="size-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  <>
+                    <Image
+                      src="/icon-google.svg"
+                      alt=""
+                      width={24}
+                      height={24}
+                      className="size-6"
+                    />
+                    <span className="text-base font-semibold text-white">
+                      Sign up with Google
+                    </span>
+                  </>
+                )}
               </button>
 
               <button
-                onClick={() => handleOAuth("apple")}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-3xl border border-[rgba(13,27,42,0.5)] bg-white p-2.5"
+                onClick={handleApple}
+                disabled={loading !== null}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-3xl border border-[rgba(13,27,42,0.5)] bg-white p-2.5 disabled:opacity-60"
               >
-                <Image
-                  src="/icon-apple.svg"
-                  alt=""
-                  width={24}
-                  height={24}
-                  className="size-6"
-                />
-                <span className="text-base font-semibold text-[#0d1b2a]">
-                  Sign up with Apple
-                </span>
+                {loading === "apple" ? (
+                  <span className="size-5 animate-spin rounded-full border-2 border-[#0d1b2a] border-t-transparent" />
+                ) : (
+                  <>
+                    <Image
+                      src="/icon-apple.svg"
+                      alt=""
+                      width={24}
+                      height={24}
+                      className="size-6"
+                    />
+                    <span className="text-base font-semibold text-[#0d1b2a]">
+                      Sign up with Apple
+                    </span>
+                  </>
+                )}
               </button>
             </div>
+
+            {error && (
+              <p className="text-center text-xs text-red-600">{error}</p>
+            )}
 
             <p className="text-center text-xs text-[#667085]">
               By continuing, you agree to our{" "}
@@ -130,46 +188,24 @@ export default function SignUpScreen({ onNext }: SignUpScreenProps) {
             <span className="text-[rgba(13,27,42,0.8)]">
               Already have an account?{" "}
             </span>
-            <button className="font-semibold text-[#007a6e]">Sign in</button>
+            <a href="/sign-in" className="font-semibold text-[#007a6e]">
+              Sign in
+            </a>
           </p>
 
           {/* Trust badges */}
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 rounded-3xl bg-[#e0f4f2] px-3 py-2">
-              <Image
-                src="/icon-shield.svg"
-                alt=""
-                width={16}
-                height={16}
-                className="size-4"
-              />
-              <span className="text-xs font-medium text-[#003d38]">
-                Secure
-              </span>
+              <Image src="/icon-shield.svg" alt="" width={16} height={16} className="size-4" />
+              <span className="text-xs font-medium text-[#003d38]">Secure</span>
             </div>
             <div className="flex items-center gap-2 rounded-3xl bg-[#e0f4f2] px-3 py-2">
-              <Image
-                src="/icon-lock.svg"
-                alt=""
-                width={16}
-                height={16}
-                className="size-4"
-              />
-              <span className="text-xs font-medium text-[#003d38]">
-                Encrypted
-              </span>
+              <Image src="/icon-lock.svg" alt="" width={16} height={16} className="size-4" />
+              <span className="text-xs font-medium text-[#003d38]">Encrypted</span>
             </div>
             <div className="flex items-center gap-2 rounded-3xl bg-[#e0f4f2] px-3 py-2">
-              <Image
-                src="/icon-zap.svg"
-                alt=""
-                width={16}
-                height={16}
-                className="size-4"
-              />
-              <span className="text-xs font-medium text-[#003d38]">
-                Instant
-              </span>
+              <Image src="/icon-zap.svg" alt="" width={16} height={16} className="size-4" />
+              <span className="text-xs font-medium text-[#003d38]">Instant</span>
             </div>
           </div>
         </div>

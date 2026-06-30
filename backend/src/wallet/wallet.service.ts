@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
   Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -10,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { Wallet } from './entities/wallet.entity';
 import { BridgeAddress } from './entities/bridge-address.entity';
+import { Transaction } from '../send/entities/transaction.entity';
 import { FundAchDto } from './dto/fund-ach.dto';
 import { FundCrosschainDto } from './dto/fund-crosschain.dto';
 import { REDIS_CLIENT } from '../redis/redis.constants';
@@ -25,6 +27,8 @@ export class WalletService {
     private readonly walletRepo: Repository<Wallet>,
     @InjectRepository(BridgeAddress)
     private readonly bridgeAddressRepo: Repository<BridgeAddress>,
+    @InjectRepository(Transaction)
+    private readonly txRepo: Repository<Transaction>,
     @Inject(REDIS_CLIENT)
     private readonly redis: Redis,
     private readonly config: ConfigService,
@@ -108,6 +112,43 @@ export class WalletService {
       address,
       expires_at: expiresAt,
       instructions: `Send USDC on ${dto.source_chain} to this address. Funds will be credited within the chain's processing time.`,
+    };
+  }
+
+  /**
+   * DEV ONLY — instantly credit the wallet so the full app loop can be demoed
+   * without real ACH/crypto rails. Disabled when NODE_ENV=production.
+   * Credits the balance and records a "funded" transaction for history.
+   */
+  async devCredit(userId: string, amount: number) {
+    if (this.config.get<string>('NODE_ENV') === 'production') {
+      throw new ForbiddenException('Dev funding is disabled in production');
+    }
+    if (!amount || amount <= 0) {
+      throw new BadRequestException('amount must be positive');
+    }
+
+    const wallet = await this.getOrCreateWallet(userId);
+    await this.walletRepo.increment({ id: wallet.id }, 'balance_usdsui', amount);
+
+    const tx = this.txRepo.create({
+      user_id: userId,
+      recipient_id: null,
+      type: 'funded',
+      amount: amount.toFixed(6),
+      fee: '0',
+      status: 'COMPLETED',
+    });
+    await this.txRepo.save(tx);
+
+    await this.invalidateBalanceCache(userId);
+
+    const updated = await this.walletRepo.findOne({ where: { id: wallet.id } });
+    return {
+      status: 'COMPLETED',
+      credited: amount,
+      balance_usdsui: parseFloat(updated?.balance_usdsui ?? '0'),
+      message: `Demo deposit of $${amount.toFixed(2)} credited.`,
     };
   }
 

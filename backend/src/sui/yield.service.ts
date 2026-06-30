@@ -91,12 +91,11 @@ export class YieldService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildYieldTransaction({
-        operation: 'deposit',
+        actionType: 'deposit',
         user: userAddress,
         vaultId,
         amount,
-        tier: result.kycTier || 0,
-      } as any);
+      } as YieldTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build yield deposit transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw new BadRequestException(
@@ -173,11 +172,11 @@ export class YieldService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildYieldTransaction({
-        operation: 'withdraw',
-        depositId,
+        actionType: 'withdraw',
         user: userAddress,
+        vaultId: deposit.vaultId,
         shares,
-      } as any);
+      } as YieldTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build yield withdrawal transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw new BadRequestException(
@@ -264,31 +263,34 @@ export class YieldService {
         return;
       }
 
-      // Build accrual transaction
-      let buildResult;
-      try {
-        buildResult = await this.transactionBuilderService.buildYieldTransaction({
-          operation: 'accrue_interest',
-          vaultIds: deposits.map((d) => d.vaultId),
-        } as any);
-      } catch (buildError) {
-        this.logger.error(`Failed to build yield accrual transaction: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
-        return;
-      }
+      // Accrue interest per distinct vault
+      const vaultIds = Array.from(new Set(deposits.map((d) => d.vaultId)));
+      for (const vaultId of vaultIds) {
+        let buildResult;
+        try {
+          buildResult = await this.transactionBuilderService.buildYieldTransaction({
+            actionType: 'accrue',
+            user: '0x0',
+            vaultId,
+          } as YieldTransactionInput);
+        } catch (buildError) {
+          this.logger.error(`Failed to build yield accrual transaction: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
+          continue;
+        }
 
-      // Submit transaction
-      try {
-        await this.transactionSubmissionService.submitWithRetry(
-          buildResult.transaction.toString(),
-          buildResult.sender,
-          'accrue_interest',
-          [deposits.map((d) => d.vaultId)],
-          buildResult.idempotencyKey,
-        );
+        try {
+          await this.transactionSubmissionService.submitWithRetry(
+            buildResult.transaction.toString(),
+            buildResult.sender,
+            'accrue_interest',
+            [vaultId],
+            buildResult.idempotencyKey,
+          );
 
-        this.logger.log(`Hourly yield accrual submitted successfully, deposits count: ${deposits.length}`);
-      } catch (error) {
-        this.logger.error(`Yield accrual submission failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          this.logger.log(`Hourly yield accrual submitted for vault ${vaultId}`);
+        } catch (error) {
+          this.logger.error(`Yield accrual submission failed for vault ${vaultId}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
       }
     } catch (error) {
       this.logger.error(

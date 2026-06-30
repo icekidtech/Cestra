@@ -13,6 +13,10 @@ describe('EventDeduplicationService', () => {
     service = module.get<EventDeduplicationService>(
       EventDeduplicationService,
     );
+
+    // Ensure a clean Redis namespace for each test (state can otherwise leak
+    // between tests that reuse digests like '0xtest').
+    await service.clearCache();
   });
 
   afterEach(async () => {
@@ -152,10 +156,10 @@ describe('EventDeduplicationService', () => {
   });
 
   describe('property-based tests', () => {
-    it('Property 3: Event Deduplication Idempotence - Same event always produces same dedup result', () => {
-      fc.assert(
-        fc.property(
-          fc.hexString({ minLength: 64, maxLength: 64 }),
+    it('Property 3: Event Deduplication Idempotence - Same event always produces same dedup result', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.hexaString({ minLength: 64, maxLength: 64 }),
           fc.integer({ min: 0, max: 1000 }),
           async (digest, eventSeq) => {
             const result1 = await service.checkAndMarkDuplicate(
@@ -176,12 +180,12 @@ describe('EventDeduplicationService', () => {
       );
     });
 
-    it('Property: Deduplication Consistency - Event key uniqueness', () => {
-      fc.assert(
-        fc.property(
-          fc.hexString({ minLength: 64, maxLength: 64 }),
+    it('Property: Deduplication Consistency - Event key uniqueness', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.hexaString({ minLength: 64, maxLength: 64 }),
           fc.integer({ min: 0, max: 1000 }),
-          fc.hexString({ minLength: 64, maxLength: 64 }),
+          fc.hexaString({ minLength: 64, maxLength: 64 }),
           fc.integer({ min: 0, max: 1000 }),
           async (digest1, seq1, digest2, seq2) => {
             // Skip if same event

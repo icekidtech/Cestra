@@ -1,5 +1,24 @@
 version: '3.8'
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cestra-postgres
+    environment:
+      POSTGRES_USER: cestra
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: cestra_dev
+    # Host 5432/5433 are already in use, so expose on 5434.
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cestra -d cestra_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     container_name: cestra-redis
@@ -10,4 +29,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres_data:
   redis_data:

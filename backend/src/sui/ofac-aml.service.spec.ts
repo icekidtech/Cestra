@@ -70,6 +70,7 @@ describe('OFACService', () => {
 
   describe('with provider configured', () => {
     beforeEach(async () => {
+      jest.useFakeTimers();
       service = await createService(
         'https://api.chainalysis.com/v1',
         'test-api-key',
@@ -77,6 +78,8 @@ describe('OFACService', () => {
     });
 
     afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
       jest.restoreAllMocks();
     });
 
@@ -120,10 +123,10 @@ describe('OFACService', () => {
         });
 
       const promise = service.checkAddresses(addresses);
-      
-      // Fast-forward through all retry delays
-      jest.runAllTimers();
-      
+
+      // Fast-forward through all retry delays (async to flush awaited promises).
+      await jest.runAllTimersAsync();
+
       const results = await promise;
 
       expect(results).toHaveLength(1);
@@ -138,13 +141,15 @@ describe('OFACService', () => {
         .mockRejectedValue(new Error('Persistent failure'));
 
       const promise = service.checkAddresses(addresses);
-      
-      // Fast-forward through all retry delays
-      jest.runAllTimers();
-      
-      await expect(promise).rejects.toThrow(
+      // Attach rejection handler before advancing timers to avoid unhandled rejection.
+      const expectation = expect(promise).rejects.toThrow(
         'OFAC/AML check unavailable after 3 retries',
       );
+
+      // Fast-forward through all retry delays
+      await jest.runAllTimersAsync();
+
+      await expectation;
 
       expect(global.fetch).toHaveBeenCalledTimes(3);
     });
@@ -277,6 +282,7 @@ describe('OFACService', () => {
     let errorService: OFACService;
 
     beforeEach(async () => {
+      jest.useFakeTimers();
       errorService = await createService(
         'https://api.chainalysis.com/v1',
         'test-api-key',
@@ -284,6 +290,8 @@ describe('OFACService', () => {
     });
 
     afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
       jest.restoreAllMocks();
     });
 
@@ -299,11 +307,9 @@ describe('OFACService', () => {
       });
 
       const promise = errorService.checkAddresses(addresses);
-      
-      // Fast-forward through all retry delays
-      jest.runAllTimers();
-      
-      await expect(promise).rejects.toThrow('Provider API returned 401');
+      const expectation = expect(promise).rejects.toThrow('Provider API returned 401');
+      await jest.runAllTimersAsync();
+      await expectation;
     });
 
     it('should handle malformed JSON in response', async () => {
@@ -316,11 +322,9 @@ describe('OFACService', () => {
       });
 
       const promise = errorService.checkAddresses(addresses);
-      
-      // Fast-forward through all retry delays
-      jest.runAllTimers();
-      
-      await expect(promise).rejects.toThrow();
+      const expectation = expect(promise).rejects.toThrow();
+      await jest.runAllTimersAsync();
+      await expectation;
     });
 
     it('should handle provider error responses', async () => {
@@ -333,11 +337,9 @@ describe('OFACService', () => {
       });
 
       const promise = errorService.checkAddresses(addresses);
-      
-      // Fast-forward through all retry delays
-      jest.runAllTimers();
-      
-      await expect(promise).rejects.toThrow('error');
+      const expectation = expect(promise).rejects.toThrow('error');
+      await jest.runAllTimersAsync();
+      await expectation;
     });
 
     it('should handle network failures with retry', async () => {
@@ -353,10 +355,10 @@ describe('OFACService', () => {
       });
 
       const promise = errorService.checkAddresses(addresses);
-      
+
       // Fast-forward through all retry delays
-      jest.runAllTimers();
-      
+      await jest.runAllTimersAsync();
+
       const result = await promise;
 
       expect(result).toHaveLength(1);

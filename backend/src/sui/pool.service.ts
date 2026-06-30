@@ -113,10 +113,10 @@ export class PoolService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildPoolTransaction({
-        operation: 'create',
-        poolName: name,
-        recipients: recipients.map((r) => ({ address: r.address, amount: r.amount })),
-        operatorAddress,
+        actionType: 'create',
+        poolId: name,
+        operator: operatorAddress,
+        targetRecipients: recipients.map((r) => ({ address: r.address, amount: r.amount })),
       } as PoolTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build pool creation transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -189,7 +189,7 @@ export class PoolService {
     // Validate contributor KYC
     const result = await this.complianceEngine.validateBeforeSubmission(
       contributor,
-      pool.operatorAddress,
+      contributor,
       amount,
       'pool_contribute',
     );
@@ -203,11 +203,11 @@ export class PoolService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildPoolTransaction({
-        operation: 'contribute',
+        actionType: 'contribute',
         poolId: pool.poolId,
-        contributor,
-        amount,
-        tier: result.kycTier || 0,
+        operator: contributor,
+        contributorAddress: contributor,
+        contributionAmount: amount,
       } as PoolTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build pool contribution transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -279,9 +279,9 @@ export class PoolService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildPoolTransaction({
-        operation: 'execute',
+        actionType: 'execute',
         poolId: pool.poolId,
-        operatorAddress,
+        operator: operatorAddress,
       } as PoolTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build pool execution transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -343,9 +343,9 @@ export class PoolService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildPoolTransaction({
-        operation: 'refund',
+        actionType: 'refund',
         poolId: pool.poolId,
-        operatorAddress,
+        operator: operatorAddress,
       } as PoolTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build pool refund transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -403,8 +403,15 @@ export class PoolService {
       name: pool.name,
       status: pool.status,
       totalAmount: pool.totalAmount.toString(),
-      contributors: pool.contributors || [],
-      recipients: pool.targetRecipients || [],
+      contributors: (pool.contributors || []).map((c) => ({
+        address: c.contributor,
+        amount: c.amount,
+        timestamp: '',
+      })),
+      recipients: (pool.targetRecipients || []).map((r) => ({
+        address: r.recipient,
+        targetAmount: r.amount,
+      })),
       createdAt: pool.createdAt.toISOString(),
       executedAt: pool.executedAt ? pool.executedAt.toISOString() : undefined,
     };

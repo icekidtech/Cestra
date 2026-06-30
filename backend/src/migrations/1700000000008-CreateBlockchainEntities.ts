@@ -4,10 +4,11 @@ export class CreateBlockchainEntities1700000000008
   implements MigrationInterface
 {
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Transaction table
+    // Transaction table (on-chain settlement records; distinct from the
+    // app-layer `transactions` table created in migration 5)
     await queryRunner.createTable(
       new Table({
-        name: 'transactions',
+        name: 'onchain_transactions',
         columns: [
           {
             name: 'id',
@@ -93,44 +94,44 @@ export class CreateBlockchainEntities1700000000008
     );
 
     await queryRunner.createIndex(
-      'transactions',
+      'onchain_transactions',
       new TableIndex({
-        name: 'IDX_transactions_status',
+        name: 'IDX_onchain_transactions_status',
         columnNames: ['status'],
       }),
     );
     await queryRunner.createIndex(
-      'transactions',
+      'onchain_transactions',
       new TableIndex({
-        name: 'IDX_transactions_sender',
+        name: 'IDX_onchain_transactions_sender',
         columnNames: ['sender'],
       }),
     );
     await queryRunner.createIndex(
-      'transactions',
+      'onchain_transactions',
       new TableIndex({
-        name: 'IDX_transactions_recipient',
+        name: 'IDX_onchain_transactions_recipient',
         columnNames: ['recipient'],
       }),
     );
     await queryRunner.createIndex(
-      'transactions',
+      'onchain_transactions',
       new TableIndex({
-        name: 'IDX_transactions_on_chain_digest',
+        name: 'IDX_onchain_transactions_on_chain_digest',
         columnNames: ['on_chain_digest'],
       }),
     );
     await queryRunner.createIndex(
-      'transactions',
+      'onchain_transactions',
       new TableIndex({
-        name: 'IDX_transactions_created_at',
+        name: 'IDX_onchain_transactions_created_at',
         columnNames: ['created_at'],
       }),
     );
     await queryRunner.createIndex(
-      'transactions',
+      'onchain_transactions',
       new TableIndex({
-        name: 'IDX_transactions_user_id',
+        name: 'IDX_onchain_transactions_user_id',
         columnNames: ['user_id'],
       }),
     );
@@ -259,10 +260,11 @@ export class CreateBlockchainEntities1700000000008
       }),
     );
 
-    // BatchPayout table
+    // BatchPayout table (on-chain pool records; distinct from the business
+    // `batch_payouts` table created in migration 7)
     await queryRunner.createTable(
       new Table({
-        name: 'batch_payouts',
+        name: 'onchain_batch_payouts',
         columns: [
           {
             name: 'id',
@@ -329,23 +331,23 @@ export class CreateBlockchainEntities1700000000008
     );
 
     await queryRunner.createIndex(
-      'batch_payouts',
+      'onchain_batch_payouts',
       new TableIndex({
-        name: 'IDX_batch_payouts_status',
+        name: 'IDX_onchain_batch_payouts_status',
         columnNames: ['status'],
       }),
     );
     await queryRunner.createIndex(
-      'batch_payouts',
+      'onchain_batch_payouts',
       new TableIndex({
-        name: 'IDX_batch_payouts_pool_id',
+        name: 'IDX_onchain_batch_payouts_pool_id',
         columnNames: ['pool_id'],
       }),
     );
     await queryRunner.createIndex(
-      'batch_payouts',
+      'onchain_batch_payouts',
       new TableIndex({
-        name: 'IDX_batch_payouts_created_at',
+        name: 'IDX_onchain_batch_payouts_created_at',
         columnNames: ['created_at'],
       }),
     );
@@ -546,10 +548,11 @@ export class CreateBlockchainEntities1700000000008
       }),
     );
 
-    // RateLock table
+    // RateLock table (on-chain FX locks; distinct from the business
+    // `rate_locks` table created in migration 7)
     await queryRunner.createTable(
       new Table({
-        name: 'rate_locks',
+        name: 'onchain_rate_locks',
         columns: [
           {
             name: 'id',
@@ -620,37 +623,37 @@ export class CreateBlockchainEntities1700000000008
     );
 
     await queryRunner.createIndex(
-      'rate_locks',
+      'onchain_rate_locks',
       new TableIndex({
-        name: 'IDX_rate_locks_business_id',
+        name: 'IDX_onchain_rate_locks_business_id',
         columnNames: ['business_id'],
       }),
     );
     await queryRunner.createIndex(
-      'rate_locks',
+      'onchain_rate_locks',
       new TableIndex({
-        name: 'IDX_rate_locks_lock_id',
+        name: 'IDX_onchain_rate_locks_lock_id',
         columnNames: ['lock_id'],
       }),
     );
     await queryRunner.createIndex(
-      'rate_locks',
+      'onchain_rate_locks',
       new TableIndex({
-        name: 'IDX_rate_locks_status',
+        name: 'IDX_onchain_rate_locks_status',
         columnNames: ['status'],
       }),
     );
     await queryRunner.createIndex(
-      'rate_locks',
+      'onchain_rate_locks',
       new TableIndex({
-        name: 'IDX_rate_locks_expiry_at',
+        name: 'IDX_onchain_rate_locks_expiry_at',
         columnNames: ['expiry_at'],
       }),
     );
     await queryRunner.createIndex(
-      'rate_locks',
+      'onchain_rate_locks',
       new TableIndex({
-        name: 'IDX_rate_locks_created_at',
+        name: 'IDX_onchain_rate_locks_created_at',
         columnNames: ['created_at'],
       }),
     );
@@ -768,11 +771,11 @@ export class CreateBlockchainEntities1700000000008
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropTable('cross_chain_transfers');
-    await queryRunner.dropTable('rate_locks');
+    await queryRunner.dropTable('onchain_rate_locks');
     await queryRunner.dropTable('savings_circles');
     await queryRunner.dropTable('yield_deposits');
-    await queryRunner.dropTable('batch_payouts');
+    await queryRunner.dropTable('onchain_batch_payouts');
     await queryRunner.dropTable('pending_transactions');
-    await queryRunner.dropTable('transactions');
+    await queryRunner.dropTable('onchain_transactions');
   }
 }

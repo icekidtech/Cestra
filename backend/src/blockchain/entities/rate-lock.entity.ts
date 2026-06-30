@@ -16,7 +16,7 @@ export enum RateLockStatus {
   EXPIRED = 'EXPIRED',
 }
 
-@Entity('rate_locks')
+@Entity('onchain_rate_locks')
 @Index(['businessId'])
 @Index(['lockId'])
 @Index(['status'])

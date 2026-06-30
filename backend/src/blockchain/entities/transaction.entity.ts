@@ -17,7 +17,7 @@ export enum TransactionStatus {
   FAILED = 'FAILED',
 }
 
-@Entity('transactions')
+@Entity('onchain_transactions')
 @Index(['status'])
 @Index(['sender'])
 @Index(['recipient'])

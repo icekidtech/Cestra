@@ -1,11 +1,13 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { SUI_CLIENT, SUI_KEYPAIR } from './sui.module';
-import { SuiClient } from '@mysten/sui';
+import { SUI_CLIENT, SUI_KEYPAIR } from './sui.constants';
+import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
-import { Transaction } from '@mysten/sui/transactions';
+import { Transaction, coinWithBalance } from '@mysten/sui/transactions';
 import { BlockchainConfigService } from './blockchain-config.service';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID, createHash } from 'crypto';
+
+const uuidv4 = (): string => randomUUID();
 
 export interface TransactionBuildResult {
   transaction: Transaction;
@@ -21,6 +23,10 @@ export interface SendTransactionInput {
   recipient: string;
   amount: bigint;
   tier: number;
+  /** Off-chain recipient identifier (hashed on-chain into recipient_hash). */
+  recipientHash?: string;
+  /** ISO corridor code index: 1=NG, 2=KE, 3=GH, 4=MX, 5=PH … */
+  corridor?: number;
   idempotencyKey?: string;
 }
 
@@ -38,7 +44,7 @@ export interface PoolTransactionInput {
 export interface YieldTransactionInput {
   user: string;
   vaultId: string;
-  actionType: 'deposit' | 'withdraw';
+  actionType: 'deposit' | 'withdraw' | 'accrue';
   amount?: bigint;
   shares?: bigint;
   idempotencyKey?: string;
@@ -47,10 +53,12 @@ export interface YieldTransactionInput {
 export interface CircleTransactionInput {
   member: string;
   circleId: string;
-  actionType: 'create' | 'contribute';
+  actionType: 'create' | 'contribute' | 'trigger_payout';
   name?: string;
   members?: string[];
   payoutSchedule?: unknown[];
+  roundDuration?: number;
+  round?: number;
   contributionAmount?: bigint;
   idempotencyKey?: string;
 }
@@ -179,20 +187,54 @@ export class TransactionBuilderService {
     const idempotencyKey = this.getIdempotencyKey(input.idempotencyKey);
     const functionPath = this.blockchainConfigService.getFunctionPath('send', 'sendPayment');
     const gasbudget = this.blockchainConfigService.getModuleConfig('send').gasbudget;
+    const coinType = this.blockchainConfigService.getCoinType();
 
-    this.logger.debug(
-      `Building Send transaction: sender=${input.sender}, recipient=${input.recipient}, amount=${input.amount}`,
+    // Shared objects required by cestra::send::send<T>
+    const sendConfig = this.blockchainConfigService.getObjectId('sendConfig');
+    const sendEscrow = this.blockchainConfigService.getObjectId('sendEscrow');
+    const txRegistry = this.blockchainConfigService.getObjectId('txRegistry');
+    const complianceRegistry = this.blockchainConfigService.getObjectId('complianceRegistry');
+    const clock = this.blockchainConfigService.getObjectId('clock');
+
+    // Fee is charged on top of the send amount (0.80%); the coin must cover both.
+    const fee = (input.amount * 80n) / 10_000n;
+    const totalDebit = input.amount + input.amount * 80n / 10_000n; // amount + fee
+    void fee;
+
+    // recipient_hash: blake2b256 of the off-chain recipient identifier.
+    const recipientId = input.recipientHash || input.recipient;
+    const recipientHash = Array.from(
+      createHash('blake2b512').update(recipientId).digest().subarray(0, 32),
     );
 
-    // Build transaction block
+    // tx_id: bytes of the idempotency key (sender-scoped on-chain via derive_key).
+    const txIdBytes = Array.from(Buffer.from(idempotencyKey, 'utf8'));
+    const corridor = input.corridor ?? 0;
+
+    this.logger.debug(
+      `Building Send transaction: sender=${input.sender}, recipient=${input.recipient}, amount=${input.amount}, fee=${fee}`,
+    );
+
     const tx = new Transaction();
+    tx.setSenderIfNotSet(input.sender);
+
+    // Select/merge a coin covering amount + fee using the coinWithBalance intent.
+    const coinIn = coinWithBalance({ type: coinType, balance: totalDebit });
+
     tx.moveCall({
       target: functionPath,
+      typeArguments: [coinType],
       arguments: [
-        tx.pure.address(input.sender),
-        tx.pure.address(input.recipient),
+        tx.object(sendConfig),
+        tx.object(sendEscrow),
+        tx.object(txRegistry),
+        tx.object(complianceRegistry),
+        coinIn,
         tx.pure.u64(input.amount),
-        tx.pure.u8(input.tier),
+        tx.pure.vector('u8', recipientHash),
+        tx.pure.u8(corridor),
+        tx.pure.vector('u8', txIdBytes),
+        tx.object(clock),
       ],
     });
 
@@ -298,9 +340,14 @@ export class TransactionBuilderService {
     this.validateObjectId(input.vaultId, 'vaultId');
 
     const idempotencyKey = this.getIdempotencyKey(input.idempotencyKey);
+    const yieldFnMap: Record<YieldTransactionInput['actionType'], string> = {
+      deposit: 'deposit',
+      withdraw: 'withdraw',
+      accrue: 'accrueInterest',
+    };
     const functionPath = this.blockchainConfigService.getFunctionPath(
       'yield',
-      input.actionType === 'deposit' ? 'deposit' : 'withdraw',
+      yieldFnMap[input.actionType],
     );
     const gasbudget = this.blockchainConfigService.getModuleConfig('yield').gasbudget;
 
@@ -343,6 +390,13 @@ export class TransactionBuilderService {
         });
         break;
 
+      case 'accrue':
+        tx.moveCall({
+          target: functionPath,
+          arguments: [tx.pure.string(input.vaultId)],
+        });
+        break;
+
       default:
         throw new BadRequestException(`Unknown yield action type: ${input.actionType}`);
     }
@@ -361,13 +415,20 @@ export class TransactionBuilderService {
    * Build a Circle transaction
    */
   async buildCircleTransaction(input: CircleTransactionInput): Promise<TransactionBuildResult> {
-    this.validateAddress(input.member, 'member');
     this.validateObjectId(input.circleId, 'circleId');
+    if (input.actionType !== 'trigger_payout') {
+      this.validateAddress(input.member, 'member');
+    }
 
     const idempotencyKey = this.getIdempotencyKey(input.idempotencyKey);
+    const functionKeyMap: Record<CircleTransactionInput['actionType'], string> = {
+      create: 'createCircle',
+      contribute: 'contribute',
+      trigger_payout: 'triggerPayout',
+    };
     const functionPath = this.blockchainConfigService.getFunctionPath(
       'circle',
-      input.actionType === 'create' ? 'createCircle' : 'contribute',
+      functionKeyMap[input.actionType],
     );
     const gasbudget = this.blockchainConfigService.getModuleConfig('circle').gasbudget;
 
@@ -409,6 +470,16 @@ export class TransactionBuilderService {
             tx.pure.string(input.circleId),
             tx.pure.address(input.member),
             tx.pure.u64(input.contributionAmount),
+          ],
+        });
+        break;
+
+      case 'trigger_payout':
+        tx.moveCall({
+          target: functionPath,
+          arguments: [
+            tx.pure.string(input.circleId),
+            tx.pure.u32(input.round || 0),
           ],
         });
         break;
@@ -585,12 +656,8 @@ export class TransactionBuilderService {
     this.logger.debug('Performing dry-run validation of transaction');
 
     try {
-      const result = await this.suiClient.executeTransactionBlock({
+      const result = await this.suiClient.dryRunTransactionBlock({
         transactionBlock: txBytes,
-        options: {
-          showEffects: true,
-          showObjectChanges: true,
-        },
       });
 
       const status = result.effects?.status?.status;

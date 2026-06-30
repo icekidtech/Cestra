@@ -434,7 +434,7 @@ export class StateSyncService {
           round: round || circle.currentRound,
           recipient,
           amount: amount.toString(),
-          paidAt: event.timestamp,
+          paidAt: event.timestamp ? String(event.timestamp) : undefined,
         });
 
         circle.payoutSchedule = schedule;
@@ -654,17 +654,38 @@ export class StateSyncService {
   }
 
   /**
-   * Validate that required fields exist in event
+   * Validate that required fields exist in event.
+   *
+   * Sui Move events serialize struct fields in snake_case (e.g. `pool_id`),
+   * while the handlers below read camelCase (`poolId`). To support both, we
+   * first augment `parsedJson` with camelCase aliases for every snake_case key,
+   * then validate. This keeps handlers simple and tolerant of either casing.
    */
   private validateRequiredFields(
     event: ParsedEvent,
     requiredFields: string[],
   ): void {
+    this.normalizeEventFields(event);
+
     for (const field of requiredFields) {
       if (!(field in event.parsedJson)) {
         throw new Error(
           `Event missing required field: ${field} (type: ${event.eventType})`,
         );
+      }
+    }
+  }
+
+  /** Add camelCase aliases for any snake_case keys in the event payload. */
+  private normalizeEventFields(event: ParsedEvent): void {
+    const json = event.parsedJson;
+    if (!json || typeof json !== 'object') return;
+    for (const key of Object.keys(json)) {
+      if (key.includes('_')) {
+        const camel = key.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+        if (!(camel in json)) {
+          json[camel] = json[key];
+        }
       }
     }
   }

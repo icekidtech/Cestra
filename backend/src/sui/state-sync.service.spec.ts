@@ -24,14 +24,14 @@ describe('StateSyncService', () => {
 
   beforeEach(async () => {
     mockDataSource = {
-      transaction: jest.fn(async (callback) => {
+      transaction: jest.fn(async (callback: any) => {
         return callback({
           create: jest.fn((entity, data) => ({ ...data })),
           findOne: jest.fn(),
           save: jest.fn(async (entity) => entity),
           find: jest.fn(),
         } as any);
-      }),
+      }) as any,
     };
 
     mockTransactionRepository = {
@@ -199,7 +199,7 @@ describe('StateSyncService', () => {
       };
 
       await expect(service.onPoolCreatedEvent(event)).rejects.toThrow(
-        'Event missing required field: pool_id',
+        'Event missing required field: poolId',
       );
     });
   });

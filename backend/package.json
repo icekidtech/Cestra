@@ -5,6 +5,9 @@
   "author": "Idopise Udoh",
   "private": true,
   "license": "UNLICENSED",
+  "pnpm": {
+    "onlyBuiltDependencies": ["@nestjs/core", "bcrypt"]
+  },
   "scripts": {
     "build": "echo 'Starting Build...' && nest build && echo 'Build Successful'",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -24,7 +27,7 @@
     "migration:show": "typeorm-ts-node-commonjs migration:show -d src/database/data-source.ts"
   },
   "dependencies": {
-    "@mysten/sui": "^2.17.0",
+    "@mysten/sui": "^1.30.0",
     "@nest-lab/throttler-storage-redis": "^1.2.0",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^3.0.0",

@@ -102,12 +102,13 @@ export class CircleService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildCircleTransaction({
-        operation: 'create',
-        circleName: name,
+        actionType: 'create',
+        circleId: name,
+        member: operatorAddress,
+        name,
         members,
-        payoutSchedule,
+        payoutSchedule: [payoutSchedule],
         roundDuration,
-        operatorAddress,
       } as CircleTransactionInput);
     } catch (error) {
       this.logger.error(`Failed to build circle creation transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -138,9 +139,13 @@ export class CircleService {
       name,
       status: SavingsCircleStatus.ACTIVE,
       circleId: submitResult.digest,
-      members,
+      members: members.map((m) => ({ memberAddress: m, contributionAmount: '0' })),
       currentRound: 1,
-      payoutSchedule,
+      payoutSchedule: members.map((m, i) => ({
+        round: i + 1,
+        recipient: m,
+        amount: '0',
+      })),
     });
 
     await this.savingsCircleRepository.save(circle);
@@ -193,11 +198,10 @@ export class CircleService {
     let buildResult;
     try {
       buildResult = await this.transactionBuilderService.buildCircleTransaction({
-        operation: 'contribute',
+        actionType: 'contribute',
         circleId: circle.circleId,
         member,
-        amount,
-        tier: result.kycTier || 0,
+        contributionAmount: amount,
         round: circle.currentRound,
       } as CircleTransactionInput);
     } catch (error) {
@@ -287,9 +291,9 @@ export class CircleService {
           let buildResult;
           try {
             buildResult = await this.transactionBuilderService.buildCircleTransaction({
-              operation: 'trigger_payout',
+              actionType: 'trigger_payout',
               circleId: circle.circleId,
-              operatorAddress: 'system',
+              member: 'system',
               round: circle.currentRound,
             } as CircleTransactionInput);
           } catch (buildError) {

@@ -15,7 +15,7 @@ export enum BatchPayoutStatus {
   REFUNDED = 'REFUNDED',
 }
 
-@Entity('batch_payouts')
+@Entity('onchain_batch_payouts')
 @Index(['status'])
 @Index(['poolId'])
 @Index(['createdAt'])

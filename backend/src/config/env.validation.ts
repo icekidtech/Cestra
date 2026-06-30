@@ -40,6 +40,10 @@ export const envValidationSchema = Joi.object({
   SUI_PRIVATE_KEY: Joi.string().required(),
   SUI_PACKAGE_ID: Joi.string().required(),
 
+  // zkLogin / Google OAuth
+  GOOGLE_CLIENT_ID: Joi.string().optional(),
+  ZKLOGIN_SALT: Joi.string().optional(),
+
   // Compliance (optional, for OFAC/AML checking)
   OFAC_API_KEY: Joi.string().optional(),
   OFAC_API_URL: Joi.string().uri().optional(),

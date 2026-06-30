@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { DataSource } from 'typeorm';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 /**
  * Standalone TypeORM DataSource for CLI migrations.
@@ -15,6 +16,7 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD,
   entities: ['src/**/*.entity.ts'],
   migrations: ['src/migrations/*.ts'],
+  namingStrategy: new SnakeNamingStrategy(),
   synchronize: false,
   migrationsRun: false,
 });

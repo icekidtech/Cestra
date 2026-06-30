@@ -37,6 +37,7 @@ export class SavingsCircle {
     round: number;
     recipient: string;
     amount: string;
+    paidAt?: string;
   }>;
 
   @Column({ type: 'varchar', length: 50, default: SavingsCircleStatus.ACTIVE })

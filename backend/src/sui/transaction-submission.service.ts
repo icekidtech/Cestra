@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, BadRequestException } from '@nestjs/common';
-import { SUI_CLIENT } from './sui.module';
-import { SuiClient } from '@mysten/sui';
+import { SUI_CLIENT } from './sui.constants';
+import { SuiClient } from '@mysten/sui/client';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PendingTransaction, PendingTransactionStatus } from '../blockchain/entities/pending-transaction.entity';
@@ -49,7 +49,7 @@ export class TransactionSubmissionService {
     const transactionId = idempotencyKey;
 
     // Store in PendingTransaction before submission
-    let pendingTx = await this.pendingTransactionRepository.save({
+    const pendingTx: PendingTransaction = await this.pendingTransactionRepository.save({
       sender,
       function: functionName,
       arguments: arguments_,
@@ -202,10 +202,14 @@ export class TransactionSubmissionService {
   /**
    * Execute a single transaction attempt
    */
-  private async executeTransaction(signedTxBytes: string): Promise<TransactionReceipt> {
+  private async executeTransaction(
+    signedTxBytes: string,
+    signature: string | string[] = [],
+  ): Promise<TransactionReceipt> {
     try {
       const result = await this.suiClient.executeTransactionBlock({
         transactionBlock: signedTxBytes,
+        signature,
         options: {
           showEffects: true,
           showEvents: true,

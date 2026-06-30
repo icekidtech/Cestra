@@ -87,7 +87,14 @@ export class ComplianceEngine {
     sender: string,
     recipient: string,
     amount: bigint,
-    transactionType: 'send' | 'pool' | 'ratelock',
+    transactionType:
+      | 'send'
+      | 'pool'
+      | 'pool_contribute'
+      | 'ratelock'
+      | 'circle_create'
+      | 'circle_contribute'
+      | 'yield_deposit',
   ): Promise<ComplianceResult> {
     const context: ComplianceContext = {
       timestamp: new Date(),

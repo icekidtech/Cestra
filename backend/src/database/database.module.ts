@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
+import { SnakeNamingStrategy } from './snake-naming.strategy';
 
 @Module({
   imports: [
@@ -26,6 +27,8 @@ import { ConfigService } from '@nestjs/config';
           entities: [],
           // autoLoadEntities picks up entities registered via TypeOrmModule.forFeature() in feature modules
           autoLoadEntities: true,
+          // Map camelCase entity properties to snake_case columns (matches migrations)
+          namingStrategy: new SnakeNamingStrategy(),
           // Never auto-sync schema — all schema changes go through explicit migrations
           synchronize: false,
         };

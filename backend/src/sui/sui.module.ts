@@ -1,7 +1,7 @@
 import { Module, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { SuiClient } from '@mysten/sui';
+import { SuiClient } from '@mysten/sui/client';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { BlockchainConfigService } from './blockchain-config.service';
 import { TransactionBuilderService } from './transaction-builder.service';
@@ -29,9 +29,9 @@ import { RateLock } from '../blockchain/entities/rate-lock.entity';
 import { CrossChainTransfer } from '../blockchain/entities/cross-chain-transfer.entity';
 import { Blacklist } from '../blockchain/entities/blacklist.entity';
 import { User } from '../auth/entities/user.entity';
+import { SUI_CLIENT, SUI_KEYPAIR } from './sui.constants';
 
-export const SUI_CLIENT = 'SUI_CLIENT';
-export const SUI_KEYPAIR = 'SUI_KEYPAIR';
+export { SUI_CLIENT, SUI_KEYPAIR } from './sui.constants';
 
 @Module({
   imports: [
@@ -85,7 +85,12 @@ export const SUI_KEYPAIR = 'SUI_KEYPAIR';
     TransactionBuilderService,
     TransactionSigningService,
     RetryStrategy,
-    CircuitBreakerService,
+    {
+      // CircuitBreakerService takes an optional plain-object config that Nest
+      // cannot resolve as a provider; construct it explicitly with defaults.
+      provide: CircuitBreakerService,
+      useFactory: () => new CircuitBreakerService(),
+    },
     TransactionSubmissionService,
     OnChainMonitorService,
     StateSyncService,
@@ -131,18 +136,22 @@ export class SuiModule implements OnModuleInit {
     const rpcUrl = this.configService.get<string>('SUI_RPC_URL');
     const network = this.configService.get<string>('SUI_NETWORK');
 
+    // Probe the RPC at startup but DO NOT crash the app if it's briefly
+    // unreachable (e.g. a public fullnode returning 503). Auth, DB, wallet and
+    // other features must keep working; on-chain calls retry independently and
+    // the event monitor already polls with its own retry/backoff.
     try {
       const client = new SuiClient({ url: rpcUrl });
-      await client.getRpcApiVersion();
-
+      const version = await client.getRpcApiVersion();
       this.logger.log(
-        `Connected to Sui ${network} network at RPC endpoint: ${rpcUrl}`,
+        `Connected to Sui ${network} network at ${rpcUrl} (RPC v${version})`,
       );
     } catch (error) {
-      this.logger.error(
-        `Failed to connect to Sui RPC at ${rpcUrl}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      this.logger.warn(
+        `Sui RPC not reachable at startup (${rpcUrl}): ` +
+          `${error instanceof Error ? error.message : 'Unknown error'}. ` +
+          `Continuing — on-chain features will recover when the RPC is available.`,
       );
-      throw new Error('Sui RPC connection failed at startup');
     }
   }
 }

@@ -4,9 +4,10 @@ import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 import { Wallet } from './entities/wallet.entity';
 import { BridgeAddress } from './entities/bridge-address.entity';
+import { Transaction } from '../send/entities/transaction.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Wallet, BridgeAddress])],
+  imports: [TypeOrmModule.forFeature([Wallet, BridgeAddress, Transaction])],
   controllers: [WalletController],
   providers: [WalletService],
   exports: [WalletService],

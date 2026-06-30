@@ -29,4 +29,16 @@ export class WalletController {
   fundCrosschain(@CurrentUser('id') userId: string, @Body() dto: FundCrosschainDto) {
     return this.walletService.fundCrosschain(userId, dto);
   }
+
+  /**
+   * POST /v1/wallet/fund/dev — DEV ONLY
+   * Instantly credits the wallet for demos. Disabled in production.
+   */
+  @Post('fund/dev')
+  fundDev(
+    @CurrentUser('id') userId: string,
+    @Body() body: { amount: number },
+  ) {
+    return this.walletService.devCredit(userId, Number(body?.amount));
+  }
 }

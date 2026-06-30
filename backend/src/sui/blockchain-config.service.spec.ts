@@ -95,7 +95,7 @@ describe('BlockchainConfigService', () => {
       const path = service.getFunctionPath('send', 'sendPayment');
 
       expect(path).toBe(
-        '0x123456789abcdef0123456789abcdef0::send::send_payment',
+        '0x123456789abcdef0123456789abcdef0::send::send',
       );
     });
 

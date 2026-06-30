@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OnChainMonitorService, ParsedEvent, OnChainEventType } from './on-chain-monitor.service';
 import { SUI_CLIENT } from './sui.module';
+import { BlockchainConfigService } from './blockchain-config.service';
 import * as fc from 'fast-check';
 
 describe('OnChainMonitorService', () => {
@@ -22,6 +23,12 @@ describe('OnChainMonitorService', () => {
         {
           provide: SUI_CLIENT,
           useValue: mockSuiClient,
+        },
+        {
+          provide: BlockchainConfigService,
+          useValue: {
+            getPackageId: () => '0x' + '9'.repeat(64),
+          },
         },
       ],
     }).compile();
@@ -165,10 +172,10 @@ describe('OnChainMonitorService', () => {
     it('Property 3: Event Deduplication Idempotence - Processing same event twice results in same parse', () => {
       fc.assert(
         fc.property(
-          fc.hexString({ minLength: 64, maxLength: 64 }),
+          fc.hexaString({ minLength: 64, maxLength: 64 }),
           fc.integer({ min: 0, max: 1000 }),
-          fc.hexString({ minLength: 64, maxLength: 64 }),
-          fc.hexString({ minLength: 64, maxLength: 64 }),
+          fc.hexaString({ minLength: 64, maxLength: 64 }),
+          fc.hexaString({ minLength: 64, maxLength: 64 }),
           fc.integer({ min: 1, max: 10_000_000_000 }),
           (digest, eventSeq, sender, recipient, amount) => {
             const event: ParsedEvent = {

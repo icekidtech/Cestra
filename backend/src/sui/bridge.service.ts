@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Cron } from '@nestjs/schedule';
-import { CrossChainTransfer } from '../blockchain/entities/cross-chain-transfer.entity';
+import { CrossChainTransfer, CrossChainTransferStatus, BridgeProtocol } from '../blockchain/entities/cross-chain-transfer.entity';
 import { TransactionBuilderService, BridgeTransactionInput } from './transaction-builder.service';
 import { TransactionSubmissionService } from './transaction-submission.service';
 
@@ -55,10 +55,10 @@ export class BridgeService {
     const pendingTransfer = this.crossChainTransferRepository.create({
       sourceChain,
       receiver,
-      amount: amount.toString(),
+      amount,
       messageId,
-      status: 'PENDING',
-      bridgeProtocol,
+      status: CrossChainTransferStatus.PENDING,
+      bridgeProtocol: bridgeProtocol as BridgeProtocol,
     });
 
     await this.crossChainTransferRepository.save(pendingTransfer);
@@ -87,7 +87,7 @@ export class BridgeService {
       transferId: transfer.id,
       sourceChain: transfer.sourceChain,
       receiver: transfer.receiver,
-      amount: transfer.amount,
+      amount: transfer.amount.toString(),
       messageId: transfer.messageId,
       status: transfer.status,
       bridgeProtocol: transfer.bridgeProtocol,
@@ -109,27 +109,30 @@ export class BridgeService {
     try {
       // Get pending CCTP transfers
       const pendingTransfers = await this.crossChainTransferRepository.find({
-        where: { status: 'PENDING', bridgeProtocol: 'CCTP' },
+        where: { status: CrossChainTransferStatus.PENDING, bridgeProtocol: BridgeProtocol.CCTP },
       });
 
       for (const transfer of pendingTransfers) {
         try {
           // Check if attestation is available (would call Circle's attestation service)
           // For now, we simulate the check
-          const attestationAvailable = await this.checkCCTPAttestation(transfer.messageId);
+          const attestation = await this.checkCCTPAttestation(transfer.messageId);
 
-          if (!attestationAvailable) {
+          if (!attestation) {
             continue;
           }
 
           // Build complete_cctp_receive transaction
           let buildResult;
           try {
-            buildResult = await this.transactionBuilderService.buildBridgeTransaction({
-              operation: 'complete_cctp',
+            buildResult = await this.transactionBuilderService.buildBridgeCctpTransaction({
+              actionType: 'cctp',
               messageId: transfer.messageId,
               receiver: transfer.receiver,
               amount: BigInt(transfer.amount),
+              nonce: transfer.messageId,
+              burnProof: attestation.burnProof,
+              attestation: attestation.attestation,
             } as BridgeTransactionInput);
           } catch (buildError) {
             this.logger.warn(`Failed to build CCTP completion for transfer ${transfer.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
@@ -146,7 +149,7 @@ export class BridgeService {
               buildResult.idempotencyKey,
             );
 
-            transfer.status = 'COMPLETED';
+            transfer.status = CrossChainTransferStatus.RECEIVED;
             transfer.receivedAt = new Date();
             await this.crossChainTransferRepository.save(transfer);
 
@@ -184,27 +187,28 @@ export class BridgeService {
     try {
       // Get pending Wormhole transfers
       const pendingTransfers = await this.crossChainTransferRepository.find({
-        where: { status: 'PENDING', bridgeProtocol: 'Wormhole' },
+        where: { status: CrossChainTransferStatus.PENDING, bridgeProtocol: BridgeProtocol.WORMHOLE },
       });
 
       for (const transfer of pendingTransfers) {
         try {
           // Check if VAA is available (would call Wormhole's VAA API)
           // For now, we simulate the check
-          const vaaAvailable = await this.checkWormholeVAA(transfer.messageId);
+          const vaa = await this.checkWormholeVAA(transfer.messageId);
 
-          if (!vaaAvailable) {
+          if (!vaa) {
             continue;
           }
 
           // Build complete_wormhole_receive transaction
           let buildResult;
           try {
-            buildResult = await this.transactionBuilderService.buildBridgeTransaction({
-              operation: 'complete_wormhole',
+            buildResult = await this.transactionBuilderService.buildBridgeWormholeTransaction({
+              actionType: 'wormhole',
               messageId: transfer.messageId,
               receiver: transfer.receiver,
               amount: BigInt(transfer.amount),
+              vaaBytes: vaa.vaaBytes,
             } as BridgeTransactionInput);
           } catch (buildError) {
             this.logger.warn(`Failed to build Wormhole completion for transfer ${transfer.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`);
@@ -221,7 +225,7 @@ export class BridgeService {
               buildResult.idempotencyKey,
             );
 
-            transfer.status = 'COMPLETED';
+            transfer.status = CrossChainTransferStatus.RECEIVED;
             transfer.receivedAt = new Date();
             await this.crossChainTransferRepository.save(transfer);
 
@@ -259,25 +263,46 @@ export class BridgeService {
     try {
       // Get failed transfers
       const failedTransfers = await this.crossChainTransferRepository.find({
-        where: { status: 'FAILED' },
+        where: { status: CrossChainTransferStatus.FAILED },
       });
 
       for (const transfer of failedTransfers) {
         try {
           this.logger.debug(`Retrying failed bridge transfer: ${transfer.id}`);
 
-          // Determine operation based on protocol
-          const operation = transfer.bridgeProtocol === 'CCTP' ? 'complete_cctp' : 'complete_wormhole';
+          const isCctp = transfer.bridgeProtocol === BridgeProtocol.CCTP;
+          const operation = isCctp ? 'complete_cctp' : 'complete_wormhole';
 
           // Build retry transaction
           let buildResult;
           try {
-            buildResult = await this.transactionBuilderService.buildBridgeTransaction({
-              operation,
-              messageId: transfer.messageId,
-              receiver: transfer.receiver,
-              amount: BigInt(transfer.amount),
-            } as BridgeTransactionInput);
+            if (isCctp) {
+              const attestation = await this.checkCCTPAttestation(transfer.messageId);
+              if (!attestation) {
+                continue;
+              }
+              buildResult = await this.transactionBuilderService.buildBridgeCctpTransaction({
+                actionType: 'cctp',
+                messageId: transfer.messageId,
+                receiver: transfer.receiver,
+                amount: BigInt(transfer.amount),
+                nonce: transfer.messageId,
+                burnProof: attestation.burnProof,
+                attestation: attestation.attestation,
+              } as BridgeTransactionInput);
+            } else {
+              const vaa = await this.checkWormholeVAA(transfer.messageId);
+              if (!vaa) {
+                continue;
+              }
+              buildResult = await this.transactionBuilderService.buildBridgeWormholeTransaction({
+                actionType: 'wormhole',
+                messageId: transfer.messageId,
+                receiver: transfer.receiver,
+                amount: BigInt(transfer.amount),
+                vaaBytes: vaa.vaaBytes,
+              } as BridgeTransactionInput);
+            }
           } catch (buildError) {
             this.logger.warn(
               `Failed to build retry transaction for transfer ${transfer.id}: ${buildError instanceof Error ? buildError.message : 'Unknown error'}`,
@@ -295,7 +320,7 @@ export class BridgeService {
               buildResult.idempotencyKey,
             );
 
-            transfer.status = 'COMPLETED';
+            transfer.status = CrossChainTransferStatus.RECEIVED;
             transfer.receivedAt = new Date();
             await this.crossChainTransferRepository.save(transfer);
 
@@ -327,10 +352,12 @@ export class BridgeService {
    * @param nonce CCTP nonce / message ID
    * @returns True if attestation is available
    */
-  private async checkCCTPAttestation(nonce: string): Promise<boolean> {
+  private async checkCCTPAttestation(
+    nonce: string,
+  ): Promise<{ burnProof: string; attestation: string } | null> {
     // Placeholder: would call Circle's attestation API
     // https://iris-api.circle.com/attestations/{nonce}
-    return false;
+    return null;
   }
 
   /**
@@ -338,12 +365,12 @@ export class BridgeService {
    * In production, this would call Wormhole's VAA API
    *
    * @param messageHash Wormhole message hash
-   * @returns True if VAA is signed and available
+   * @returns The signed VAA bytes, or null if not yet available
    */
-  private async checkWormholeVAA(messageHash: string): Promise<boolean> {
+  private async checkWormholeVAA(messageHash: string): Promise<{ vaaBytes: string } | null> {
     // Placeholder: would call Wormhole's VAA API
     // https://api.wormholescan.io/api/v1/signed_vaa/{chain}/{emitter}/{sequence}
-    return false;
+    return null;
   }
 
   /**
@@ -364,7 +391,7 @@ export class BridgeService {
       return;
     }
 
-    transfer.status = 'RECEIVED';
+    transfer.status = CrossChainTransferStatus.RECEIVED;
     transfer.receivedAt = new Date();
     await this.crossChainTransferRepository.save(transfer);
 
@@ -390,7 +417,7 @@ export class BridgeService {
       return;
     }
 
-    transfer.status = 'FAILED';
+    transfer.status = CrossChainTransferStatus.FAILED;
     await this.crossChainTransferRepository.save(transfer);
 
     this.logger.error(`Bridge transfer failed: transferId=${transfer.id}, messageId=${messageId}, error=${error}`);

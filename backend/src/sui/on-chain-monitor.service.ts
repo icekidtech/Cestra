@@ -6,8 +6,9 @@ import {
   Inject,
 } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { SuiClient } from '@mysten/sui';
-import { SUI_CLIENT } from './sui.module';
+import { SuiClient } from '@mysten/sui/client';
+import { SUI_CLIENT } from './sui.constants';
+import { BlockchainConfigService } from './blockchain-config.service';
 import { EventEmitter } from 'events';
 import * as redis from 'ioredis';
 
@@ -81,6 +82,7 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     @Inject(SUI_CLIENT) private suiClient: SuiClient,
+    private readonly blockchainConfig: BlockchainConfigService,
   ) {
     this.redisClient = new redis.Redis({
       host: process.env.REDIS_HOST || 'localhost',
@@ -102,8 +104,21 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    // Initialize WebSocket subscription
-    await this.initializeWebSocket();
+    // Initialize WebSocket subscription in the background so a slow or
+    // unsupported subscription endpoint never blocks application bootstrap
+    // (app.listen()). On failure it falls back to RPC polling internally.
+    //
+    // The Sui public fullnodes have deprecated JSON-RPC event subscriptions,
+    // so on those endpoints we go straight to polling. Set SUI_ENABLE_WS=true
+    // to attempt a WebSocket subscription against a node that still supports it.
+    if (process.env.SUI_ENABLE_WS === 'true') {
+      void this.initializeWebSocket();
+    } else {
+      this.logger.log(
+        'WebSocket event subscription disabled (SUI_ENABLE_WS!=true); using RPC polling',
+      );
+      await this.startPolling();
+    }
   }
 
   async onModuleDestroy() {
@@ -122,15 +137,24 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
       // Build filter for all monitored events
       const filter = {
         All: this.monitoredEventTypes.map((eventType) => ({
-          MoveEventType: eventType,
+          MoveEventType: eventType as string,
         })),
-      };
+      } as any;
 
-      // Subscribe to events
-      this.wsSubscription = await this.suiClient.subscribeEvent({
-        filter,
-        onMessage: (event) => this.handleEvent(event),
-      });
+      // Subscribe to events. Race against a timeout because some RPC nodes
+      // accept the connection but never complete the subscription handshake.
+      this.wsSubscription = await Promise.race([
+        this.suiClient.subscribeEvent({
+          filter,
+          onMessage: (event) => this.handleEvent(event),
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('subscribeEvent timed out after 10s')),
+            10_000,
+          ),
+        ),
+      ]);
 
       this.isConnected = true;
       this.reconnectAttempts = 0;
@@ -294,7 +318,22 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Poll for events from Sui RPC
+   * Resolve a `cestra::module::Event` identifier to its fully-qualified
+   * on-chain type using the deployed package ID, e.g.
+   * `0x9395…::send::SentEvent`. Sui's `MoveEventType` filter requires the
+   * concrete package address, not the named address.
+   */
+  private resolveEventType(eventType: string): string {
+    const packageId = this.blockchainConfig.getPackageId();
+    return eventType.replace(/^cestra::/, `${packageId}::`);
+  }
+
+  /**
+   * Poll for events from Sui RPC.
+   *
+   * The public Sui fullnodes reject a compound `{ All: [...] }` event filter
+   * for `queryEvents` ("Invalid params"). Instead we query each monitored
+   * event type with its own `MoveEventType` filter and keep a per-type cursor.
    */
   @Interval(5000) // Every 5 seconds
   private async pollEvents(): Promise<void> {
@@ -302,15 +341,61 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
       return; // Not polling or WebSocket is connected
     }
 
+    for (const eventType of this.monitoredEventTypes) {
+      try {
+        const fqType = this.resolveEventType(eventType);
+        const cursorKey = `event:polling:cursor:${eventType}`;
+        const cursorRaw = await this.getPollingCursor(cursorKey);
+        const cursor = cursorRaw ? JSON.parse(cursorRaw) : null;
+
+        const response = await this.suiClient.queryEvents({
+          query: { MoveEventType: fqType },
+          cursor,
+          limit: 50,
+          order: 'ascending',
+        });
+
+        if (response.data && response.data.length > 0) {
+          this.logger.debug(
+            `Polled ${response.data.length} ${eventType} event(s)`,
+          );
+          for (const event of response.data) {
+            await this.handleEvent(event);
+          }
+          if (response.nextCursor) {
+            await this.savePollingCursor(
+              JSON.stringify(response.nextCursor),
+              cursorKey,
+            );
+          }
+        }
+      } catch (error) {
+        // A missing event type (never emitted yet) yields an empty result on
+        // most nodes; only log genuine errors at debug to avoid log spam.
+        this.logger.debug(
+          `Polling ${eventType}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        );
+      }
+    }
+  }
+
+  // Legacy combined-poll error handling retained below for reference; the
+  // per-type loop above supersedes it.
+  private async pollEventsLegacy(): Promise<void> {
+    if (!this.pollingActive || this.isConnected) {
+      return;
+    }
+
     try {
-      const cursor = await this.getPollingCursor();
+      const cursorRaw = await this.getPollingCursor();
+      const cursor = cursorRaw ? JSON.parse(cursorRaw) : null;
 
       const response = await this.suiClient.queryEvents({
         query: {
           All: this.monitoredEventTypes.map((eventType) => ({
-            MoveEventType: eventType,
+            MoveEventType: eventType as string,
           })),
-        },
+        } as any,
         cursor,
         limit: 100,
         order: 'ascending',
@@ -325,7 +410,7 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
 
         // Update cursor
         if (response.nextCursor) {
-          await this.savePollingCursor(response.nextCursor);
+          await this.savePollingCursor(JSON.stringify(response.nextCursor));
         }
       }
     } catch (error) {
@@ -352,9 +437,11 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get last polling cursor from Redis
    */
-  private async getPollingCursor(): Promise<string | null> {
+  private async getPollingCursor(
+    key = 'event:polling:cursor',
+  ): Promise<string | null> {
     try {
-      return await this.redisClient.get('event:polling:cursor');
+      return await this.redisClient.get(key);
     } catch (error) {
       this.logger.warn(
         `Error getting polling cursor: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -366,9 +453,12 @@ export class OnChainMonitorService implements OnModuleInit, OnModuleDestroy {
   /**
    * Save polling cursor to Redis
    */
-  private async savePollingCursor(cursor: string): Promise<void> {
+  private async savePollingCursor(
+    cursor: string,
+    key = 'event:polling:cursor',
+  ): Promise<void> {
     try {
-      await this.redisClient.set('event:polling:cursor', cursor);
+      await this.redisClient.set(key, cursor);
     } catch (error) {
       this.logger.warn(
         `Error saving polling cursor: ${error instanceof Error ? error.message : 'Unknown error'}`,

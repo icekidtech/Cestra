@@ -49,6 +49,17 @@ export class AuthController {
   }
 
   /**
+   * POST /v1/auth/kyc/dev-upgrade — DEV ONLY
+   * Advances the caller's KYC tier without Persona. Disabled in production.
+   */
+  @Post('kyc/dev-upgrade')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async devUpgradeKyc(@CurrentUser('id') userId: string) {
+    return this.authService.devUpgradeKyc(userId);
+  }
+
+  /**
    * POST /v1/auth/kyc/webhook
    * Persona webhook callback — no auth required.
    * Called by Persona when a KYC session is completed.

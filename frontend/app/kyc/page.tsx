@@ -4,15 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useAuth } from "../lib/auth";
-import { initiateKyc, ApiError } from "../lib/api";
+import { devUpgradeKyc, ApiError } from "../lib/api";
 
-type KycStatus = "idle" | "loading" | "error" | "redirecting";
+type KycStatus = "idle" | "loading" | "error" | "done";
 
 export default function KycPage() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const router = useRouter();
   const [status, setStatus] = useState<KycStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [newTier, setNewTier] = useState<number | null>(null);
 
   const handleStartKyc = async () => {
     if (!isAuthenticated) {
@@ -24,16 +25,17 @@ export default function KycPage() {
     setErrorMessage("");
 
     try {
-      const response = await initiateKyc(1);
-      setStatus("redirecting");
-      // Redirect to Persona hosted verification
-      window.location.href = response.session_url;
+      // Demo: advance the KYC tier instantly (real Persona flow goes here).
+      const { kyc_tier } = await devUpgradeKyc();
+      setNewTier(kyc_tier);
+      setStatus("done");
+      setTimeout(() => router.push("/home"), 1400);
     } catch (error) {
       setStatus("error");
       if (error instanceof ApiError) {
         setErrorMessage(error.message);
       } else {
-        setErrorMessage("Unable to start verification. Please try again.");
+        setErrorMessage("Unable to complete verification. Please try again.");
       }
     }
   };
